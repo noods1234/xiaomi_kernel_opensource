@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * xiaomi-usb-dock-ultra.dtsi
+ *
+ * Device Tree Include for the Xiaomi USB-C Ultra Dock daughter board.
+ *
+ * Include this file from your device-specific DTS to add dock support.
+ * Your board DTS must define (or reuse existing):
+ *
+ *   &usb_dwc3_0   — the primary USB 3.x controller node
+ *   &usb_vbus_boost — PMIC regulator providing 5 V to USB-C VBUS
+ *
+ * Usage in device DTS:
+ *   #include "xiaomi-usb-dock-ultra.dtsi"
+ *
+ * Then override properties as needed:
+ *   &usb_dock {
+ *       xiaomi,pd-max-power-mw = <45000>;  // limit charging to 45 W
+ *   };
+ */
+
+/ {
+	/*
+	 * USB-C Dock node.
+	 *
+	 * Placed at the root so it can reference any SoC node via phandle.
+	 * In practice, board files may move this under a specific bus node.
+	 */
+	usb_dock: usb-dock {
+		compatible = "xiaomi,usb-dock-ultra";
+		status = "okay";
+
+		/*
+		 * vbus-supply and usb-role-switch must be defined by the
+		 * including board DTS.  Provide sensible defaults so the
+		 * binding validates even without a charger node.
+		 */
+		/* vbus-supply = <&usb_vbus_boost>; */
+		/* usb-role-switch = <&usb_dwc3_0>; */
+
+		/* Capabilities present on the Ultra dock */
+		xiaomi,dock-has-usb-hub;
+		xiaomi,dock-has-dp;
+		xiaomi,dock-has-hdmi;
+		xiaomi,dock-has-ethernet;
+		xiaomi,dock-has-pd-passthru;
+		xiaomi,dock-has-sd-reader;
+		xiaomi,dock-has-audio;
+
+		/* Maximum PD pass-through power for phone charging (mW) */
+		xiaomi,pd-max-power-mw = <65000>;
+	};
+};
+
+/*
+ * USB controller overrides required for dock support.
+ *
+ * The properties below are merged into the existing dwc3 node from the
+ * SoC DTSI.  They enable USB host mode and dual-role operation.
+ */
+&usb_dwc3_0 {
+	/*
+	 * dr_mode = "otg" allows runtime role switching between device
+	 * (peripheral/charging) and host (dock attached) modes.
+	 */
+	dr_mode = "otg";
+
+	/*
+	 * role-switch-default-mode = "peripheral":
+	 * Boot as a USB peripheral so the phone charges normally.
+	 * The dock driver switches to "host" only when dock is detected.
+	 */
+	role-switch-default-mode = "peripheral";
+
+	/*
+	 * USB 3.1 Gen 2 SuperSpeed support (10 Gbps).
+	 * Required for full hub throughput when multiple USB-A ports are
+	 * in use simultaneously.
+	 */
+	maximum-speed = "super-speed-plus";
+
+	/*
+	 * Disable USB 2.0 high-speed fallback timer extension so the hub
+	 * enumerates at full USB 3.x speed as quickly as possible.
+	 */
+	snps,dis-u1-entry-quirk;
+	snps,dis-u2-entry-quirk;
+};

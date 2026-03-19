@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Kconfig for Xiaomi USB-C Dock / Daughter Board
+#
+
+config XIAOMI_USB_DOCK
+	tristate "Xiaomi USB-C Dock / Daughter Board support"
+	depends on USB && USB_ROLE_SWITCH
+	depends on TYPEC
+	depends on TYPEC_DP_ALTMODE || !TYPEC_DP_ALTMODE
+	depends on EXTCON
+	depends on REGULATOR
+	select USB_COMMON
+	help
+	  Enable support for the Xiaomi USB-C dock daughter board.
+
+	  The dock connects to a Xiaomi smartphone or tablet via a single
+	  USB Type-C cable and provides:
+	    - USB 3.1 Gen 2 host hub (up to 4x USB-A + 1x USB-C)
+	    - DisplayPort 1.4 Alt Mode (4K@60 Hz)
+	    - HDMI 2.0 output (via on-dock DP bridge)
+	    - Gigabit Ethernet (USB3-to-GbE)
+	    - USB Power Delivery pass-through charging (up to 65 W)
+	    - UHS-I SD / microSD card reader
+	    - 3.5 mm analog audio jack
+
+	  Compatible Xiaomi devices:
+	    Xiaomi 14 Ultra, Xiaomi 15 Ultra, Xiaomi Pad 6 Pro,
+	    Xiaomi Pad 6S Pro 12.4, Xiaomi Pad 7 Pro, MIX Fold 4
+
+	  If unsure, say N.

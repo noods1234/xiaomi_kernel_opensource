@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * xiaomi-pad7-pro-dock.dts
+ *
+ * Overlay DTS: Xiaomi Pad 7 Pro (muyu) + USB-C Ultra Dock
+ *
+ * SoC: Qualcomm Snapdragon SM8750 (Oryon CPU + Adreno 830 GPU)
+ * Kernel branch: muyu-v-oss
+ *
+ * This overlay enables full dock functionality on the Pad 7 Pro.
+ * Apply on top of the base muyu board DTS.
+ *
+ * Build (example):
+ *   make ARCH=arm64 dtbs
+ *   dtc -I dts -O dtb -o xiaomi-pad7-pro-dock.dtb xiaomi-pad7-pro-dock.dts
+ *
+ * To apply as an overlay at runtime (Android):
+ *   adb root
+ *   adb push xiaomi-pad7-pro-dock.dtbo /data/local/tmp/
+ *   adb shell dtbotool apply /data/local/tmp/xiaomi-pad7-pro-dock.dtbo
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include "xiaomi-usb-dock-ultra.dtsi"
+
+/*
+ * ---- SM8750 USB controller ----
+ * The base board DTS already defines usb_dwc3_0.
+ * The dock DTSI merges dr_mode = "otg" and SuperSpeed settings above.
+ */
+&usb_dwc3_0 {
+	/* Reassert any muyu-specific USB overrides here if needed */
+};
+
+/*
+ * ---- VBUS boost regulator ----
+ * On SM8750 platforms the PMIC provides a dedicated USB VBUS boost
+ * regulator. Reference the correct PMIC regulator name for muyu.
+ */
+&usb_dock {
+	vbus-supply = <&pm8550ve_l2>;     /* 5V VBUS boost from PMIC */
+	usb-role-switch = <&usb_dwc3_0>;
+};
+
+/*
+ * ---- USB Type-C / PD controller ----
+ * SM8750 uses the Qualcomm PMIC_GLINK USB-C framework.
+ * Enable dual-role (DRP) on the primary USB-C port.
+ */
+&pmic_glink_altmode {
+	status = "okay";
+};

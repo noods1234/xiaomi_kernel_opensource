@@ -1,0 +1,145 @@
+# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/usb/xiaomi,usb-dock.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Xiaomi USB-C Dock / Daughter Board
+
+maintainers:
+  - Xiaomi USB Dock Team <kernel@mi.com>
+
+description: |
+  The Xiaomi USB-C dock daughter board connects to a Xiaomi smartphone or
+  tablet through a single USB Type-C cable. It exposes USB host ports, a
+  DisplayPort Alt Mode video output, HDMI output (via an on-dock DP-to-HDMI
+  bridge), Gigabit Ethernet, SD card reader, and optionally a 3.5 mm audio
+  jack, while simultaneously supporting USB Power Delivery pass-through
+  charging up to 65 W.
+
+  On-dock ICs (reference design):
+    Hub:       GL3523 (USB 3.1 Gen 2, 4+1 port hub)
+    DP bridge: AG9311 (DP 1.4 → HDMI 2.0 active bridge)
+    GbE:       AX88179A (USB 3.0 → Gigabit Ethernet)
+    SD reader: RTS5328 (USB 3.0 → SD/microSD UHS-I)
+    PD IC:     FUSB302B or TPS65987D (USB PD 3.0, PPS)
+
+  Compatible Xiaomi host devices (non-exhaustive):
+    SM8250: Xiaomi Mi 10 Ultra, Redmi K30 Pro (VOOC/PD)
+    SM8350: Xiaomi 11T Pro, MIX 4
+    SM8450: Xiaomi 12 series
+    SM8550: Xiaomi 13 Ultra, Xiaomi Pad 6 Pro
+    SM8650: Xiaomi 14 Ultra, Xiaomi Pad 6S Pro 12.4
+    SM8750: Xiaomi 15 Ultra, Xiaomi Pad 7 Pro
+    MT6985: Xiaomi 14T (MediaTek Dimensity 9200+)
+
+properties:
+  compatible:
+    enum:
+      - xiaomi,usb-dock-basic   # USB hub only
+      - xiaomi,usb-dock-pro     # Hub + DP + LAN
+      - xiaomi,usb-dock-ultra   # Full feature set
+
+  # VBUS supply provided by the phone to power the dock hub
+  # (only required when the phone controls VBUS, not for self-powered docks)
+  vbus-supply:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: |
+      Regulator providing 5 V VBUS to the dock. Must be enabled in host
+      mode. Optional: self-powered docks draw VBUS from their own supply.
+
+  # USB role switch phandle (from the SoC USB controller node)
+  usb-role-switch:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: |
+      Handle to the USB role switch controller on the SoC. The dock driver
+      uses this to switch the USB controller between device and host mode
+      when the dock is attached or detached.
+
+  # Capability flags (boolean properties)
+  xiaomi,dock-has-usb-hub:
+    type: boolean
+    description: USB 3.1 Gen 2 hub IC is present on the dock.
+
+  xiaomi,dock-has-dp:
+    type: boolean
+    description: DisplayPort 1.4 Alt Mode output is supported.
+
+  xiaomi,dock-has-hdmi:
+    type: boolean
+    description: HDMI 2.0 output is present (via DP-to-HDMI bridge).
+
+  xiaomi,dock-has-ethernet:
+    type: boolean
+    description: Gigabit Ethernet port is present (USB3-to-GbE).
+
+  xiaomi,dock-has-pd-passthru:
+    type: boolean
+    description: |
+      USB Power Delivery pass-through is supported. When an upstream
+      charger is connected to the dock's power input, the dock forwards
+      charging power to the phone while also powering its own peripherals.
+
+  xiaomi,dock-has-sd-reader:
+    type: boolean
+    description: UHS-I SD / microSD card reader is present.
+
+  xiaomi,dock-has-audio:
+    type: boolean
+    description: 3.5 mm analog audio jack is present.
+
+  xiaomi,pd-max-power-mw:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    minimum: 5000
+    maximum: 100000
+    default: 65000
+    description: |
+      Maximum USB PD power (in mW) available for phone charging when an
+      external charger is connected to the dock. Defaults to 65 000 mW.
+
+required:
+  - compatible
+
+additionalProperties: false
+
+examples:
+  - |
+    /*
+     * Xiaomi Pad 7 Pro (muyu) — Ultra dock on USB-C port
+     *
+     * The Snapdragon SM8750 USB3 controller uses the dwc3 role switch.
+     * VBUS is controlled by the PMIC regulator usb_vbus_boost.
+     */
+    usb_dock: usb-dock {
+        compatible = "xiaomi,usb-dock-ultra";
+
+        vbus-supply = <&usb_vbus_boost>;
+        usb-role-switch = <&usb_dwc3_0>;
+
+        xiaomi,dock-has-usb-hub;
+        xiaomi,dock-has-dp;
+        xiaomi,dock-has-hdmi;
+        xiaomi,dock-has-ethernet;
+        xiaomi,dock-has-pd-passthru;
+        xiaomi,dock-has-sd-reader;
+        xiaomi,dock-has-audio;
+        xiaomi,pd-max-power-mw = <65000>;
+    };
+
+  - |
+    /*
+     * Xiaomi 14 Ultra (aurora) — Pro dock (hub + DP + LAN, no audio jack)
+     */
+    usb_dock_pro: usb-dock {
+        compatible = "xiaomi,usb-dock-pro";
+
+        vbus-supply = <&usb_vbus_boost>;
+        usb-role-switch = <&usb_dwc3_0>;
+
+        xiaomi,dock-has-usb-hub;
+        xiaomi,dock-has-dp;
+        xiaomi,dock-has-hdmi;
+        xiaomi,dock-has-ethernet;
+        xiaomi,dock-has-pd-passthru;
+        xiaomi,pd-max-power-mw = <65000>;
+    };
