@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+menu "USB Video / Subdev drivers"
+
+config VIDEO_ND_CONTROLLER
+	tristate "LC Variable ND Filter V4L2 subdev (One Inch Wonder)"
+	depends on USB && VIDEO_V4L2
+	select MEDIA_CONTROLLER
+	help
+	  Driver for the LCDRV-001 LC Variable ND filter controller PCB used
+	  in the One Inch Wonder project (Xiaomi 13U/14U + IMX989 camera).
+
+	  The board uses an STM32G0B1 microcontroller connected via USB CDC.
+	  This driver exposes the ND attenuation, mode, temperature, CCM
+	  index, and calibration trigger as V4L2 subdev custom controls.
+
+	  Required kernel options:
+	    CONFIG_VIDEO_V4L2_SUBDEV_API=y
+	    CONFIG_MEDIA_CONTROLLER=y
+
+	  To compile as a module, choose M — the module will be named
+	  nd_controller.
+
+endmenu
