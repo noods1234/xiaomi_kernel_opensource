@@ -119,9 +119,9 @@ static void dispatch(const uint8_t *pkt)
             xSemaphoreGive(g_state_mutex);
             xSemaphoreTake(g_spi_mutex, portMAX_DELAY);
             mcp4131_set_wiper(0);
-            g_nd.wiper_raw = 0;
             xSemaphoreGive(g_spi_mutex);
             xSemaphoreTake(g_state_mutex, portMAX_DELAY);
+            g_nd.wiper_raw = 0;
             send_response(CMD_WRITE_CAL_TRIG, 0xCA);
         }
         break;
@@ -135,7 +135,7 @@ static void dispatch(const uint8_t *pkt)
             xSemaphoreTake(g_spi_mutex, portMAX_DELAY);
             mcp4131_set_wiper(s_cal.wiper_step);
             xSemaphoreGive(g_spi_mutex);
-            HAL_Delay(200);   /* settle — OK in usb_task, no timing-critical work */
+            vTaskDelay(pdMS_TO_TICKS(200));   /* yield scheduler during LC settle */
             xSemaphoreTake(g_state_mutex, portMAX_DELAY);
             g_nd.wiper_raw = s_cal.wiper_step;
             send_response(CMD_WRITE_CAL_NEXT, s_cal.wiper_step);

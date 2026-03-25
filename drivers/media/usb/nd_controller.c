@@ -237,9 +237,6 @@ static int nd_s_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 
 	case V4L2_CID_ND_CAL_TRIGGER:
-		ret = nd_write_reg(dev, ND_CMD_WRITE_TARGET,
-				   ND_CAL_TRIGGER_MAGIC);
-		/* re-use 0x10 target command slot; firmware expects 0xCA */
 		ret = nd_transact(dev, 0x20, ND_CAL_TRIGGER_MAGIC, 0, NULL);
 		break;
 

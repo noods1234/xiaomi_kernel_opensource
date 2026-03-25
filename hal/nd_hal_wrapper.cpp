@@ -25,18 +25,19 @@ namespace oiw {
 void NdHalWrapper::staticNotify(const camera3_callback_ops_t *ops,
                                 const camera3_notify_msg_t   *msg)
 {
-    auto *self = reinterpret_cast<NdHalWrapper *>(
+    // ops points to CallbackOpsWrapper::ops (first member) — cast is safe.
+    auto *w = reinterpret_cast<CallbackOpsWrapper *>(
         const_cast<camera3_callback_ops_t *>(ops));
-    self->upstream_cb_->notify(self->upstream_cb_, msg);
+    w->self->upstream_cb_->notify(w->self->upstream_cb_, msg);
 }
 
 void NdHalWrapper::staticProcessCaptureResult(
         const camera3_callback_ops_t   *ops,
         const camera3_capture_result_t *result)
 {
-    auto *self = reinterpret_cast<NdHalWrapper *>(
+    auto *w = reinterpret_cast<CallbackOpsWrapper *>(
         const_cast<camera3_callback_ops_t *>(ops));
-    self->onCaptureResult(result);
+    w->self->onCaptureResult(result);
 }
 
 // ── Construction / destruction ────────────────────────────────── //
@@ -45,8 +46,9 @@ NdHalWrapper::NdHalWrapper(camera3_device_t *real_dev, int fps)
     : real_dev_(real_dev)
     , ae_(fps)
 {
-    wrapper_cb_.notify                = &staticNotify;
-    wrapper_cb_.process_capture_result = &staticProcessCaptureResult;
+    wrapper_cb_.ops.notify                = &staticNotify;
+    wrapper_cb_.ops.process_capture_result = &staticProcessCaptureResult;
+    wrapper_cb_.self = this;
 
     ae_.setCcmCallback([this](int idx) {
         android::Mutex::Autolock lock(pending_ccm_lock_);
@@ -64,6 +66,7 @@ NdHalWrapper *NdHalWrapper::create(camera3_device_t *real_dev, int fps)
         return nullptr;
     }
     wrapper->v4l2_.setMode(NdMode::AutoHal);
+    wrapper->startPolling();
     return wrapper;
 }
 
@@ -80,7 +83,7 @@ int NdHalWrapper::initialize(const camera3_callback_ops_t *cb)
 {
     upstream_cb_ = cb;
     // Pass our intercept wrapper instead of the real cb
-    return real_dev_->ops->initialize(real_dev_, &wrapper_cb_);
+    return real_dev_->ops->initialize(real_dev_, &wrapper_cb_.ops);
 }
 
 int NdHalWrapper::configureStreams(camera3_stream_configuration_t *list)
@@ -96,15 +99,14 @@ int NdHalWrapper::processCaptureRequest(camera3_capture_request_t *req)
         if (pending_ccm_ && req->settings) {
             android::Mutex::Autolock cl(ccm_lock_);
             if (pending_ccm_idx_ < (int)ccm_table_.size()) {
-                // clone settings so we can modify them
-                camera_metadata_t *meta =
-                    clone_camera_metadata(req->settings);
-                buildCcmMetadata(ccm_table_[pending_ccm_idx_], meta);
-                // NOTE: in a real HAL wrapper we'd keep the clone alive
-                // for the duration of the request.  Here we write to
-                // a const_cast to keep the example concise; production
-                // code should use android::CameraMetadata throughout.
-                const_cast<camera3_capture_request_t *>(req)->settings = meta;
+                // Clone settings so we can modify them.  The clone is
+                // owned by pending_meta_ and freed after the request
+                // is forwarded to the real HAL.
+                pending_meta_.reset(clone_camera_metadata(req->settings));
+                buildCcmMetadata(ccm_table_[pending_ccm_idx_],
+                                 pending_meta_.get());
+                const_cast<camera3_capture_request_t *>(req)->settings =
+                    pending_meta_.get();
             }
             pending_ccm_ = false;
         }
@@ -176,10 +178,18 @@ void NdHalWrapper::onCaptureResult(const camera3_capture_result_t *result)
 void NdHalWrapper::buildCcmMetadata(const CcmEntry &entry,
                                     camera_metadata_t *meta)
 {
+    // Helper: update existing tag or add it if absent.
+    auto upsert = [&](uint32_t tag, const void *data, size_t count) {
+        camera_metadata_entry_t e;
+        if (find_camera_metadata_entry(meta, tag, &e) == 0)
+            update_camera_metadata_entry(meta, e.index, data, count, nullptr);
+        else
+            add_camera_metadata_entry(meta, tag, data, count);
+    };
+
     // COLOR_CORRECTION_MODE = TRANSFORM_MATRIX
     const uint8_t ccm_mode = ANDROID_COLOR_CORRECTION_MODE_TRANSFORM_MATRIX;
-    update_camera_metadata_entry_by_tag(meta,
-        ANDROID_COLOR_CORRECTION_MODE, &ccm_mode, 1, nullptr);
+    upsert(ANDROID_COLOR_CORRECTION_MODE, &ccm_mode, 1);
 
     // COLOR_CORRECTION_TRANSFORM = 3×3 matrix as camera_metadata_rational_t[9]
     camera_metadata_rational_t transform[9];
@@ -188,12 +198,10 @@ void NdHalWrapper::buildCcmMetadata(const CcmEntry &entry,
         transform[i].numerator   = static_cast<int32_t>(entry.matrix3x3[i] * 1000.0f);
         transform[i].denominator = 1000;
     }
-    update_camera_metadata_entry_by_tag(meta,
-        ANDROID_COLOR_CORRECTION_TRANSFORM, transform, 9, nullptr);
+    upsert(ANDROID_COLOR_CORRECTION_TRANSFORM, transform, 9);
 
     // COLOR_CORRECTION_GAINS = [R, Gr, Gb, B]
-    update_camera_metadata_entry_by_tag(meta,
-        ANDROID_COLOR_CORRECTION_GAINS, entry.gains_rggb.data(), 4, nullptr);
+    upsert(ANDROID_COLOR_CORRECTION_GAINS, entry.gains_rggb.data(), 4);
 
     ALOGD("CCM injected for ND %.2f stops", entry.nd_stops);
 }

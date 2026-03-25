@@ -46,7 +46,7 @@ bool lut_load(void)
         return false;
     }
 
-    const uint8_t *lut_bytes = flash + 2;
+    const uint8_t *lut_bytes = flash + 8;  /* magic stored as 8-byte doubleword */
     uint16_t stored_crc = (uint16_t)lut_bytes[LUT_SIZE]
                         | ((uint16_t)lut_bytes[LUT_SIZE + 1] << 8);
     uint16_t calc_crc = crc16(lut_bytes, LUT_SIZE);

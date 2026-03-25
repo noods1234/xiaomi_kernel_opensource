@@ -24,8 +24,9 @@
 namespace oiw {
 
 // ── Control ID constants ─────────────────────────────────────── //
-// Mirror of V4L2_CID_USER_BASE + offset (0x00980000 base on Android)
-static constexpr uint32_t V4L2_CID_USER_BASE_ANDROID = 0x00980000U;
+// V4L2_CID_USER_BASE = V4L2_CTRL_CLASS_USER | 0x900 = 0x00980900
+// Do NOT hard-code 0x00980000 — that is V4L2_CTRL_CLASS_USER alone.
+static constexpr uint32_t V4L2_CID_USER_BASE_ANDROID = 0x00980900U;
 
 static constexpr uint32_t CID_ND_TARGET    = V4L2_CID_USER_BASE_ANDROID + 0x1000;
 static constexpr uint32_t CID_ND_ACTUAL    = V4L2_CID_USER_BASE_ANDROID + 0x1001;

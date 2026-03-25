@@ -33,6 +33,8 @@
 #include <thread>
 #include <vector>
 
+#include <system/camera_metadata.h>
+
 namespace oiw {
 
 // ── CCM entry from calibration JSON ──────────────────────────── //
@@ -69,6 +71,13 @@ public:
 private:
     explicit NdHalWrapper(camera3_device_t *real_dev, int fps);
 
+    // Trampoline: camera3_callback_ops_t must be first member so that a
+    // pointer to it equals a pointer to this struct (standard layout).
+    struct CallbackOpsWrapper {
+        camera3_callback_ops_t ops;  // MUST remain first
+        NdHalWrapper          *self;
+    };
+
     // Result callback — intercepts each completed frame
     static void staticNotify(const camera3_callback_ops_t *ops,
                              const camera3_notify_msg_t   *msg);
@@ -85,7 +94,7 @@ private:
 
     camera3_device_t            *real_dev_;
     const camera3_callback_ops_t *upstream_cb_ = nullptr;
-    camera3_callback_ops_t       wrapper_cb_{};
+    CallbackOpsWrapper           wrapper_cb_{};
 
     NdV4l2Client                 v4l2_;
     CinemaAe                     ae_;
@@ -96,9 +105,15 @@ private:
     android::Mutex               ccm_lock_;
 
     // Pending CCM to inject on next request after settle
-    bool       pending_ccm_  = false;
+    bool       pending_ccm_     = false;
     int        pending_ccm_idx_ = 0;
     android::Mutex pending_ccm_lock_;
+
+    // Owns the cloned metadata for the current request; freed on next request.
+    struct CameraMetadataDeleter {
+        void operator()(camera_metadata_t *m) const { free_camera_metadata(m); }
+    };
+    std::unique_ptr<camera_metadata_t, CameraMetadataDeleter> pending_meta_;
 
     std::thread  poll_thread_;
     std::atomic<bool> poll_running_{false};
