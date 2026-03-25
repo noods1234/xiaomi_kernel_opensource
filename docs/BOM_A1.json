@@ -1,0 +1,190 @@
+{
+  "project": "ONE INCH WONDER — Rev A-1 Integrated eND Driver",
+  "document": "BOM-A1-001 Rev A",
+  "date": "2026-03-25",
+  "description": "Component list for Rev A-1 integrated eND controller board targeting IMX989 / Xiaomi 13U/14U cinema conversion. Rev A-0 bench mule uses LC-Tec LCC-230 in place of the custom driver board; all other items are shared.",
+
+  "streams": {
+    "A0_bench_mule": {
+      "description": "External LC-Tec controller for optical characterisation before committing to custom PCB",
+      "additional_items": [
+        {
+          "ref": "U_EXT",
+          "description": "LC-Tec LCC-230 two-channel programmable LC controller",
+          "manufacturer": "LC-Tec",
+          "mpn": "LCC-230",
+          "qty": 1,
+          "notes": "USB programmable, up to 30 Vrms, two independent channels. Use for Rev A-0 optical bench characterisation of the eND cell before Rev A-1 PCB spin."
+        }
+      ]
+    },
+    "A1_integrated": {
+      "description": "Miniaturised embedded driver board inside or sidecar to phone body"
+    }
+  },
+
+  "bom": [
+    {
+      "ref": "CELL1",
+      "description": "LC-Tec PolarView eND(NBf2.0) — dual-cell guest-host variable ND for cinematography",
+      "manufacturer": "LC-Tec",
+      "mpn": "PolarView eND(NBf2.0) custom",
+      "qty": 1,
+      "package": "Custom — dimension per IMX989 clear aperture + overscan",
+      "notes": "Primary optical element. Dual-cell guest-host design, recommended between lens and sensor, optimised for uniform angular transmittance and reduced colour shift at intermediate states. Clear aperture to be finalised against DQ_4 (IMX989 active area). Request OEM/custom miniaturised format from LC-Tec. Backup: PolarView ND(212)-AR for Rev A-0 bench work."
+    },
+    {
+      "ref": "U1",
+      "description": "STM32U5A5 — ARM Cortex-M33, 2MB Flash, 786KB SRAM, USB FS, I2C, TIM",
+      "manufacturer": "STMicroelectronics",
+      "mpn": "STM32U5A5RJT6",
+      "qty": 1,
+      "package": "LQFP64",
+      "notes": "Replaces STM32G0B1 from LCDRV-001. Lower active and standby power, larger flash for LUT headroom, Cortex-M33 TrustZone optional. USB FS CDC, I2C1 for TMP117, I2C2 for AD5696R, TIM2 for AC drive carrier square wave, TIM3 for settle timer."
+    },
+    {
+      "ref": "U2",
+      "description": "TI TMP117 — High-accuracy digital temperature sensor, ±0.1°C, I2C",
+      "manufacturer": "Texas Instruments",
+      "mpn": "TMP117MAIDRVR",
+      "qty": 1,
+      "package": "SOT-23-6",
+      "notes": "Replaces NTC B3950 + STM32 ADC channel. 16-bit result, 0.0078125°C/LSB. ADDR pin to GND → I2C address 0x48. ALERT pin to STM32 EXTI for interrupt-driven over-temperature detection. Mount as close to LC cell frame as PCB geometry allows. This is the primary thermal compensation input for the LUT."
+    },
+    {
+      "ref": "U3",
+      "description": "Analog Devices AD5696R — Quad 16-bit DAC, internal 2.5V reference, I2C",
+      "manufacturer": "Analog Devices",
+      "mpn": "AD5696RBRUZ",
+      "qty": 1,
+      "package": "TSSOP-16",
+      "notes": "Replaces MCP4131 digital pot + AD9833 DDS. DAC_A drives OPA2197 for ND amplitude setpoint (0-2.5V → scaled to 0-15V). DAC_B reserved for DC offset trim / calibration rail. DAC_C/D reserved for dual-cell independent drive in a future Rev. Internal 2.5V reference, RSTSEL pin to DVDD. A2=A1=A0=GND → I2C address 0x0C (AD5696R 7-bit: 0b0001100)."
+    },
+    {
+      "ref": "U4",
+      "description": "TI TPS65131 — Programmable positive/negative dual-output DC-DC converter",
+      "manufacturer": "Texas Instruments",
+      "mpn": "TPS65131RHDR",
+      "qty": 1,
+      "package": "QFN-24",
+      "notes": "Generates +15V and -15V rails from 3.6-5.5V input (phone VBUS or Li-Ion via LDO). Output voltages set by feedback resistors. Provides supply rails for OPA2197 and the LC cell drive stage. Enable pin tied to STM32 GPIO so rails can be sequenced on power-up and cut on fault."
+    },
+    {
+      "ref": "U5",
+      "description": "TI OPA2197 — Dual 36V precision op amp, rail-to-rail I/O, low offset",
+      "manufacturer": "Texas Instruments",
+      "mpn": "OPA2197IDR",
+      "qty": 1,
+      "package": "SOIC-8",
+      "notes": "Channel A: non-inverting buffer/gain stage for AD5696R DAC_A output. Gain = 1 + R_fb/R_in = 6 (R_in=10kΩ, R_fb=50kΩ) → output swing 0 to +15V. Channel B: unity-gain inverter for negative half-cycle path (optional; depends on final drive topology). Supply: ±15V from TPS65131."
+    },
+    {
+      "ref": "U6",
+      "description": "Analog Devices ADG1419 — Precision SPDT analog switch, ±15V",
+      "manufacturer": "Analog Devices",
+      "mpn": "ADG1419BRTZ",
+      "qty": 1,
+      "package": "SOT-23-6",
+      "notes": "Polarity routing switch in the AC drive path. IN pin driven by STM32 TIM2 output compare (square wave carrier). COM = OPA2197 channel A output. S1 = LC cell positive terminal. S2 = inverted path (OPA2197 channel B output or negative rail via resistor). Switches at carrier frequency (100-1000 Hz, characterise with cell)."
+    },
+    {
+      "ref": "U7",
+      "description": "TI TPS7A20 — 200mA LDO, 1.5-5.5V output, for STM32 and digital supply",
+      "manufacturer": "Texas Instruments",
+      "mpn": "TPS7A2033PDBVR",
+      "qty": 1,
+      "package": "SOT-23-5",
+      "notes": "3.3V LDO for STM32U5 and I2C pull-up rail. Input from phone VBUS (5V) or 5V regulated supply."
+    },
+    {
+      "ref": "L1",
+      "description": "4.7µH power inductor, TPS65131 positive boost",
+      "manufacturer": "Würth",
+      "mpn": "744043004",
+      "qty": 1,
+      "package": "0805"
+    },
+    {
+      "ref": "L2",
+      "description": "4.7µH power inductor, TPS65131 negative inverting",
+      "manufacturer": "Würth",
+      "mpn": "744043004",
+      "qty": 1,
+      "package": "0805"
+    },
+    {
+      "ref": "R1",
+      "description": "10kΩ 0.1% — OPA2197 Ch.A gain resistor R_in",
+      "qty": 1,
+      "package": "0402"
+    },
+    {
+      "ref": "R2",
+      "description": "50kΩ 0.1% — OPA2197 Ch.A gain resistor R_fb",
+      "qty": 1,
+      "package": "0402",
+      "notes": "G = 1 + 50k/10k = 6. Vout_max = 2.5V × 6 = 15V matching TPS65131 +15V rail."
+    },
+    {
+      "ref": "R3",
+      "description": "10kΩ 0.1% — OPA2197 Ch.B gain resistor (inverter)",
+      "qty": 2,
+      "package": "0402",
+      "notes": "Both equal value for unity-gain inverter: Vout = -Vin."
+    },
+    {
+      "ref": "R4",
+      "description": "100Ω current limiting resistor, LC cell series",
+      "qty": 1,
+      "package": "0402",
+      "notes": "Limits inrush to LC cell on polarity switch. Value to be adjusted per cell characterisation."
+    },
+    {
+      "ref": "R5",
+      "description": "4.7kΩ — I2C pull-up (SDA/SCL), shared bus",
+      "qty": 2,
+      "package": "0402",
+      "notes": "One per bus line. 3.3V pull-up for I2C bus carrying TMP117 + AD5696R."
+    },
+    {
+      "ref": "C_bulk",
+      "description": "10µF X5R ceramic bulk caps, TPS65131 input and output",
+      "qty": 4,
+      "package": "0805"
+    },
+    {
+      "ref": "C_bypass",
+      "description": "100nF X7R ceramic bypass caps, U1-U6 supply pins",
+      "qty": 12,
+      "package": "0402"
+    },
+    {
+      "ref": "J1",
+      "description": "USB Type-C receptacle (USB 2.0) — host connection",
+      "manufacturer": "Amphenol",
+      "mpn": "12401598E4#2A",
+      "qty": 1,
+      "notes": "USB CDC data path to Android host. Same USB protocol as LCDRV-001."
+    },
+    {
+      "ref": "J2",
+      "description": "4-pin flex connector (FPC 0.5mm) — LC cell electrodes",
+      "qty": 1,
+      "notes": "Carries AC drive signal and optional sense line to LC cell cartridge. Exact pinout TBD with cell format."
+    },
+    {
+      "ref": "SH1",
+      "description": "EMI shielding can — covers analog driver section",
+      "notes": "Encloses U5, U6, and LC drive traces. Mandatory to prevent switching noise coupling into the sensor. Board-level shield, not individual device shields."
+    }
+  ],
+
+  "design_notes": [
+    "Rev A-0: replace U3-U6 and the custom analog section with LC-Tec LCC-230 external controller. STM32U5 (U1) acts as USB-CDC bridge to LCC-230 via serial/I2C as appropriate for the LCC-230 interface.",
+    "Rev A-1 AC drive carrier frequency to be chosen empirically during bench mule phase. LC-Tec documents use AC square-wave test conditions. Start at 500Hz and characterise transmittance, flicker, and response time.",
+    "AD5696R DAC_A→OPA2197 gain path assumes internal 2.5V reference. Verify reference accuracy against production cell at temperature extremes.",
+    "TPS65131 rail sequencing: enable +15V first, then -15V, on power-up. Reverse order on shutdown. Control via two STM32 GPIO pins to TPS65131 EN1/EN2.",
+    "DC bias monitoring: STM32U5 ADC1 channel monitors LC cell midpoint via R divider. Same 100-sample running mean fault logic as LCDRV-001, threshold 15mV, fault action = DAC→0 + TPS65131 disable.",
+    "LUT flash storage: same format as LCDRV-001 (magic doubleword + LUT bytes + CRC16). Temperature axis now uses TMP117 directly in decidegC (same units as NTC path). No Steinhart-Hart required."
+  ]
+}
