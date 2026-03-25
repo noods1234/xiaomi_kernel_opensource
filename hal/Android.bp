@@ -1,0 +1,80 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Android.bp — ONE INCH WONDER Camera HAL wrapper (Layer 3)
+// Document: LCHAL-001 Rev A  |  2026-03-24
+//
+// Builds a shared library that wraps the Qualcomm qcamera3 HAL.
+// The library is loaded by the Camera Provider HAL (or a custom
+// camera.provider service) in place of the stock provider.
+//
+// Build:
+//   m nd_camera_hal_wrapper
+//
+// Deploy:
+//   adb push out/.../nd_camera_hal_wrapper.so /vendor/lib64/hw/
+//
+// The wrapper expects:
+//   /vendor/etc/camera/nd_calibration.json  — CCM calibration table
+//   /dev/v4l-subdev*                         — nd_controller.ko loaded
+
+cc_library_shared {
+    name: "nd_camera_hal_wrapper",
+    vendor: true,
+
+    srcs: [
+        "nd_v4l2_client.cpp",
+        "cinema_ae.cpp",
+        "nd_hal_wrapper.cpp",
+    ],
+
+    local_include_dirs: ["."],
+
+    shared_libs: [
+        "liblog",
+        "libutils",
+        "libcamera_metadata",
+        "libhardware",
+    ],
+
+    static_libs: [
+        // Pull in the real Qualcomm camera HAL as a static dep so we can
+        // call its ops directly.  Replace with the correct prebuilt target
+        // name from your vendor tree (check: find vendor/ -name "*.so" | grep camera3)
+        // "camera.qcom",   // uncomment once prebuilt target name is confirmed
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DLOG_TAG=\"NdHalWrapper\"",
+    ],
+
+    cppflags: [
+        "-std=c++17",
+    ],
+
+    // Suppress warnings from Qualcomm HAL headers
+    include_dirs: [
+        "hardware/interfaces/camera/common/1.0/default/include",
+        "hardware/libhardware/include",
+        "system/media/camera/include",
+    ],
+}
+
+// ── Standalone unit-test binary ───────────────────────────────── //
+// Runs cinema_ae PID + ccm_json_parser on host without hardware.
+cc_test_host {
+    name: "nd_hal_tests",
+
+    srcs: [
+        "cinema_ae.cpp",
+        "tests/cinema_ae_test.cpp",
+        "tests/ccm_json_parser_test.cpp",
+    ],
+
+    local_include_dirs: ["."],
+
+    shared_libs: ["liblog"],
+
+    cppflags: ["-std=c++17"],
+}
