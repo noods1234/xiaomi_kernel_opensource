@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Kconfig — techpack/camera/drivers/nd_controller
+#
+# ONE INCH WONDER — LC Variable ND Filter driver
+# Xiaomi SM8550 (Kalama) camera techpack integration
+
+config VIDEO_ND_CONTROLLER
+	tristate "LC Variable ND Filter V4L2 subdev (One Inch Wonder)"
+	depends on USB
+	depends on VIDEO_V4L2
+	depends on MEDIA_CONTROLLER
+	depends on VIDEO_V4L2_SUBDEV_API
+	select V4L2_ASYNC
+	help
+	  Driver for the LCDRV-001 LC variable ND filter controller PCB
+	  used in the One Inch Wonder project (Xiaomi 13U/14U + IMX989).
+
+	  The board carries an STM32G0B1 MCU connected to the host via
+	  USB CDC bulk endpoints.  The driver exposes ND attenuation,
+	  operating mode, LC cell temperature, CCM index, and calibration
+	  trigger as V4L2 subdev custom controls.
+
+	  The subdev registers asynchronously (v4l2_async_register_subdev)
+	  and is discovered by the Qualcomm camera service through the
+	  shared media graph.  A board-level platform driver is responsible
+	  for creating the media pad link between this subdev and the
+	  IMX989 sensor entity.
+
+	  To compile as a module, choose M — the module will be called
+	  nd_controller.  It is safe to leave this as M even when the
+	  Qualcomm camera stack is built-in.
+
+	  If unsure, say M.

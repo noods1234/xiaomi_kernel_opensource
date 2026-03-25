@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Kconfig — techpack/camera/drivers
+#
+# One Inch Wonder camera accessory drivers for Xiaomi SM8550 (Kalama)
+
+source "techpack/camera/drivers/nd_controller/Kconfig"

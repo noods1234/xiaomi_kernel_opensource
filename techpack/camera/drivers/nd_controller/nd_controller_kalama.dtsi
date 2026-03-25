@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * nd_controller_kalama.dtsi — DTS overlay for LCDRV-001 on SM8550 / Kalama
+ *
+ * ONE INCH WONDER — Xiaomi 13U/14U (thor / ishtar)
+ * Document: LCDRV-KMOD-001 Rev B  |  2026-03-25
+ *
+ * Include this file from the board .dts AFTER the USB OTG node is defined:
+ *
+ *   #include "nd_controller_kalama.dtsi"
+ *
+ * The LCDRV-001 board connects to the phone over the USB-C OTG port.
+ * Because it is a USB device (not a platform device), it does not need
+ * a static DT node — it enumerates when plugged in.
+ *
+ * This overlay does two things:
+ *   1. Ensures the USB-C port is configured for OTG / host mode so the
+ *      STM32 CDC device can enumerate.
+ *   2. Declares the ND filter media entity in the camera pipeline so
+ *      the Qualcomm cam_sensor_core can build the pipeline graph at
+ *      boot, ready for when the USB device appears.
+ *
+ * ── Platform pipeline entity (static, always present) ───────────────────
+ *
+ * The nd_controller_phy node below is a thin platform device whose only
+ * job is to hold the media graph link declaration (nd_controller SOURCE →
+ * IMX989 SINK).  When nd_controller.ko calls v4l2_async_register_subdev(),
+ * the Qualcomm camera platform driver matches it and creates the link.
+ *
+ * Adjust "qcom,imx989-node" to match the actual sensor subdev phandle in
+ * your board file once DQ_4 (active area) is confirmed.
+ */
+
+/* ── USB OTG port configuration ─────────────────────────────────────── */
+&usb_qmp_dp_phy {
+	/* Enable OTG role-switching so the phone can act as USB host */
+	status = "okay";
+};
+
+&usb0 {
+	/* dr_mode = "otg" allows both device and host operation */
+	dr_mode = "otg";
+	usb-role-switch;
+	status = "okay";
+
+	port {
+		usb0_role_switch: endpoint {
+			remote-endpoint = <&usb_con_hs>;
+		};
+	};
+};
+
+/* ── ND filter pipeline entity placeholder ───────────────────────────── *
+ *                                                                         *
+ * This node registers a platform device that is probed by the board-level *
+ * camera init code.  On probe it calls v4l2_async_notifier_register() to  *
+ * wait for the nd_controller subdev and the IMX989 subdev; when both are  *
+ * present it creates the SOURCE→SINK pad link.                            *
+ *                                                                         *
+ * NOTE: The exact compatible string, reg address, and clock/power         *
+ * resources must be aligned with the Xiaomi thor BoardConfig.             */
+/ {
+	nd_filter_pipeline: nd-filter-pipeline {
+		compatible = "oiw,nd-filter-pipeline";
+
+		/*
+		 * Phandle of the IMX989 sensor node.  Replace with the
+		 * actual phandle once the IMX989 DTS node name is confirmed
+		 * (open design question DQ_4).
+		 */
+		sensor-node = <&imx989_sensor>;
+
+		/*
+		 * V4L2 async subdev match criteria for the nd_controller.
+		 * The platform glue driver registers a notifier with this
+		 * match so it is notified when nd_controller.ko calls
+		 * v4l2_async_register_subdev().
+		 */
+		nd-subdev-name = "nd_controller";
+
+		status = "okay";
+	};
+};

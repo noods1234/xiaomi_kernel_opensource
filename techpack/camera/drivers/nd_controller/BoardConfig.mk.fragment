@@ -1,0 +1,45 @@
+# BoardConfig.mk fragment — LCDRV-001 ND filter driver
+#
+# Append to device/xiaomi/thor/BoardConfig.mk
+# (or device/xiaomi/ishtar/BoardConfig.mk for the 14U)
+#
+# ── Kernel module installation ────────────────────────────────── #
+BOARD_VENDOR_KERNEL_MODULES += \
+    $(KERNEL_MODULES_OUT)/nd_controller.ko
+
+# ── Defconfig fragment ────────────────────────────────────────── #
+# Add to arch/arm64/configs/vendor/kalama_GKI.config (or append to
+# the device-specific fragment under arch/arm64/configs/vendor/):
+#
+#   CONFIG_VIDEO_ND_CONTROLLER=m
+#
+# This enables the driver as a loadable module.  The USB device table
+# entry (VID 0x0483 / PID 0x5750) ensures it is loaded automatically
+# by ueventd / modprobe when the LCDRV-001 is plugged in.
+
+# ── ueventd rule ──────────────────────────────────────────────── #
+# Add to device/xiaomi/thor/ueventd.thor.rc:
+#
+#   # LCDRV-001 LC ND filter controller (STM32G0B1 USB CDC)
+#   /dev/v4l-subdev*        0660  system  camera
+#
+# This gives the camera service (system:camera) read/write access to
+# the nd_controller V4L2 subdev node that appears when the device is
+# plugged in.
+
+# ── SELinux policy ────────────────────────────────────────────── #
+# Add to device/xiaomi/thor/sepolicy/vendor/file_contexts:
+#
+#   /dev/v4l-subdev[0-9]+   u:object_r:camera_device:s0
+#
+# (This is usually already covered by the generic camera policy; verify
+# with "adb shell ls -Z /dev/v4l-subdev*" after first boot.)
+
+# ── init.rc module load ───────────────────────────────────────── #
+# If modprobe on USB hotplug is not available, add a fallback in
+# device/xiaomi/thor/init.thor.rc:
+#
+#   on property:sys.usb.state=configured
+#       insmod /vendor/lib/modules/nd_controller.ko
+#
+# In practice modprobe handles this automatically via MODULE_DEVICE_TABLE.
