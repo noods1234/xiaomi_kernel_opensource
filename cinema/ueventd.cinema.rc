@@ -1,0 +1,14 @@
+# ueventd.cinema.rc
+# udev-style permission rules for cinema mode device nodes.
+# Merged into the device ueventd.rc via device_cinema.mk PRODUCT_COPY_FILES.
+
+# cinema_mode kernel sysfs — allow system user to toggle without root prompt
+/sys/kernel/cinema_mode/enable          0664    system  system
+
+# Thermal message cinema node
+/sys/class/thermal/thermal_message/cinema_mode  0664    system  system
+
+# GPU performance nodes used by cinema_on_apply.sh / init.cinema.rc
+/sys/class/kgsl/kgsl-3d0/min_pwrlevel  0664    system  system
+/sys/class/kgsl/kgsl-3d0/force_no_nap  0664    system  system
+/sys/class/kgsl/kgsl-3d0/idle_timer    0664    system  system

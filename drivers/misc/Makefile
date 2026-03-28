@@ -65,3 +65,6 @@ obj-$(CONFIG_VCPU_STALL_DETECTOR)	+= vcpu_stall_detector.o
 obj-$(CONFIG_UID_SYS_STATS)	+= uid_sys_stats.o
 obj-$(CONFIG_QSEECOM_PROXY) 	+= qseecom_proxy.o
 obj-$(CONFIG_MI_HARDWARE_ID)	+= hwid/
+obj-$(CONFIG_CINEMA_END)		+= cinema_end.o
+obj-$(CONFIG_CINEMA_MODE)		+= cinema_mode.o
+obj-$(CONFIG_CINEMA_MODE_KUNIT_TEST)	+= cinema_mode_kunit.o

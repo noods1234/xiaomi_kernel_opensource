@@ -1,0 +1,184 @@
+# init.cinema.rc
+# Cinema / Pro-Video boot-time optimisation fragment for Xiaomi 14 Ultra (aurora)
+#
+# Drop into device/xiaomi/aurora/ and add to the device BoardConfig:
+#   PRODUCT_COPY_FILES += device/xiaomi/aurora/init.cinema.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/init.cinema.rc
+# ------------------------------------------------------------------
+
+on init
+    # Give the cinema_mode sysfs node correct ownership immediately
+    chown system system /sys/kernel/cinema_mode/enable
+    chmod 0644 /sys/kernel/cinema_mode/enable
+
+# BUG FIX 1: Moved UFS queue sysfs writes from "on fs" to "on boot".
+# "on fs" fires during the early filesystem-mount phase before UFS driver
+# probe has completed, so /sys/block/sd*/queue/* nodes do not yet exist.
+# "on boot" fires after early drivers are initialised, making these writes
+# reliable.
+on boot
+    # ---- UFS I/O scheduler (initial application) ----
+    write /sys/block/sda/queue/scheduler bfq
+    write /sys/block/sda/queue/iosched/low_latency 1
+    write /sys/block/sda/queue/read_ahead_kb 512
+    write /sys/block/sda/queue/nr_requests 256
+
+    write /sys/block/sdb/queue/scheduler bfq
+    write /sys/block/sdb/queue/iosched/low_latency 1
+    write /sys/block/sdb/queue/read_ahead_kb 512
+    write /sys/block/sdb/queue/nr_requests 256
+
+    write /sys/block/sdc/queue/scheduler bfq
+    write /sys/block/sdc/queue/iosched/low_latency 1
+    write /sys/block/sdc/queue/read_ahead_kb 512
+    write /sys/block/sdc/queue/nr_requests 256
+
+    write /sys/block/sdd/queue/scheduler bfq
+    write /sys/block/sdd/queue/iosched/low_latency 1
+    write /sys/block/sdd/queue/read_ahead_kb 512
+    write /sys/block/sdd/queue/nr_requests 256
+
+    write /sys/block/sde/queue/scheduler bfq
+    write /sys/block/sde/queue/iosched/low_latency 1
+    write /sys/block/sde/queue/read_ahead_kb 512
+    write /sys/block/sde/queue/nr_requests 256
+
+    write /sys/block/sdf/queue/scheduler bfq
+    write /sys/block/sdf/queue/iosched/low_latency 1
+    write /sys/block/sdf/queue/read_ahead_kb 512
+    write /sys/block/sdf/queue/nr_requests 256
+
+    # ---- CPU governor ----
+    # Default to schedutil; cinema_mode.ko switches to full-performance
+    # when /sys/kernel/cinema_mode/enable is set to 1.
+    # BUG FIX 3+4: On kernels >= 4.14 (SM8650) the governor and its tunables
+    # are exposed under the cpufreq policy sysfs, not the per-cpu cpufreq dir.
+    # Writing to cpu0/cpufreq/scaling_governor sets the policy-level governor
+    # but the schedutil tunables (up/down_rate_limit_us) only exist under
+    # the per-policy schedutil/ subdirs.
+    # SM8650 (Pineapple) has 4 cpufreq policies:
+    #   policy0  CPUs 0-1  A520 efficiency
+    #   policy2  CPUs 2-3  A720 performance-lo
+    #   policy4  CPUs 4-6  A720 performance-hi
+    #   policy7  CPU 7     X4 prime
+    write /sys/devices/system/cpu/cpufreq/policy0/scaling_governor schedutil
+    write /sys/devices/system/cpu/cpufreq/policy2/scaling_governor schedutil
+    write /sys/devices/system/cpu/cpufreq/policy4/scaling_governor schedutil
+    write /sys/devices/system/cpu/cpufreq/policy7/scaling_governor schedutil
+
+    # Schedutil rate-limit: 500 µs up, 20 ms down — fast response to
+    # sudden load spikes (new video frame), conservative scale-down.
+    write /sys/devices/system/cpu/cpufreq/policy0/schedutil/up_rate_limit_us 500
+    write /sys/devices/system/cpu/cpufreq/policy0/schedutil/down_rate_limit_us 20000
+    write /sys/devices/system/cpu/cpufreq/policy2/schedutil/up_rate_limit_us 500
+    write /sys/devices/system/cpu/cpufreq/policy2/schedutil/down_rate_limit_us 20000
+    write /sys/devices/system/cpu/cpufreq/policy4/schedutil/up_rate_limit_us 500
+    write /sys/devices/system/cpu/cpufreq/policy4/schedutil/down_rate_limit_us 20000
+    write /sys/devices/system/cpu/cpufreq/policy7/schedutil/up_rate_limit_us 500
+    write /sys/devices/system/cpu/cpufreq/policy7/schedutil/down_rate_limit_us 20000
+
+    # ---- GPU (Adreno 750) ----
+    # msm_adreno_tz governor — set min clock floor to level 3 (~55% of max,
+    # ~500 MHz on Adreno 750's OPP table; level 0 = max ~903 MHz,
+    # level 7 = min) so the GPU never stalls on the first preview frame.
+    write /sys/class/kgsl/kgsl-3d0/min_pwrlevel 3
+    write /sys/class/kgsl/kgsl-3d0/devfreq/governor msm-adreno-tz
+
+    # ---- Thermal ----
+    # Raise the software skin-temperature trip point during boot so
+    # the device does not throttle before the user starts recording.
+    # Actual cinema-mode thermal signalling is done via thermal_message
+    # (echo 1 > /sys/class/thermal/thermal_message/cinema_mode).
+    chown system system /sys/class/thermal/thermal_message/cinema_mode
+    chmod 0664 /sys/class/thermal/thermal_message/cinema_mode
+
+    # ---- Venus video codec ----
+    # Ensure the Venus firmware search path is available before any
+    # camera app opens a V4L2 encode session.
+    mkdir /vendor/firmware_mnt 0771 system system
+
+    # ---- Audio ----
+    # WCD938X: force 48 kHz reference clock at boot so the first
+    # capture session does not incur a MCLK ramp delay.
+    # BUG FIX 5: The platform driver attribute lives under the bound device
+    # node (/sys/bus/platform/devices/<name>/auto_rate), not under
+    # /sys/bus/platform/drivers/<driver>/auto_rate which is a directory of
+    # per-device symlinks and has no writable attribute of its own.
+    write /sys/bus/platform/devices/wcd938x-codec/auto_rate 0
+
+on property:sys.boot_completed=1
+    # Post-boot BFQ re-application is handled by cinema_io_tune service
+    # (covers all LUNs via glob loop). No duplicate writes here.
+
+    # ZRAM — activation and disksize are handled by cinema_io_tune.sh
+    # to avoid double-swapon races with vendor init.
+
+    # Lower swappiness: keep camera buffers in RAM as long as possible.
+    write /proc/sys/vm/swappiness 10
+    write /proc/sys/vm/dirty_ratio 20
+    write /proc/sys/vm/dirty_background_ratio 5
+
+    # Large file (RAW video) write-back: let BFQ coalesce writes before
+    # flushing. dirty_expire must be > dirty_writeback to avoid flusher
+    # thrash (equal values cause writeback on every wakeup cycle).
+    write /proc/sys/vm/dirty_expire_centisecs 1000
+    write /proc/sys/vm/dirty_writeback_centisecs 500
+
+    # Raise the inotify limits used by camera HAL file watchers.
+    write /proc/sys/fs/inotify/max_user_watches 524288
+    write /proc/sys/fs/inotify/max_user_instances 256
+
+    # BUG FIX 2: Merged duplicate "on property:sys.boot_completed=1" stanza.
+    # The original file had a second stanza at the bottom that only contained
+    # "start cinema_io_tune". Android init processes duplicate trigger blocks
+    # independently and the ordering becomes ambiguous. Consolidated here.
+    start cinema_io_tune
+
+# ------------------------------------------------------------------
+# Cinema mode property trigger
+# Usage: setprop persist.cinema.mode 1   (activates)
+#        setprop persist.cinema.mode 0   (deactivates)
+# ------------------------------------------------------------------
+
+on property:persist.cinema.mode=1
+    write /sys/kernel/cinema_mode/enable 1
+    write /sys/class/thermal/thermal_message/cinema_mode 1
+    write /sys/class/kgsl/kgsl-3d0/min_pwrlevel 0
+    setprop sys.cinema.active 1
+    start cinema_on_apply
+
+on property:persist.cinema.mode=0
+    write /sys/kernel/cinema_mode/enable 0
+    write /sys/class/thermal/thermal_message/cinema_mode 0
+    write /sys/class/kgsl/kgsl-3d0/min_pwrlevel 3
+    setprop sys.cinema.active 0
+    start cinema_off_apply
+
+# ------------------------------------------------------------------
+# Service: cinema_io_tune
+# Applies I/O tuning to all UFS LUNs after boot and handles ZRAM
+# activation idempotently (checks /proc/swaps before swapon).
+# ------------------------------------------------------------------
+
+service cinema_io_tune /vendor/bin/sh /vendor/bin/cinema_io_tune.sh
+    class late_start
+    user root
+    group root
+    seclabel u:r:cinema_io_tune:s0
+    oneshot
+    disabled
+
+service cinema_on_apply /vendor/bin/sh /vendor/bin/cinema_on_apply.sh
+    class main
+    user root
+    group root
+    seclabel u:r:cinema_io_tune:s0
+    oneshot
+    disabled
+
+service cinema_off_apply /vendor/bin/sh /vendor/bin/cinema_off_apply.sh
+    class main
+    user root
+    group root
+    seclabel u:r:cinema_io_tune:s0
+    oneshot
+    disabled

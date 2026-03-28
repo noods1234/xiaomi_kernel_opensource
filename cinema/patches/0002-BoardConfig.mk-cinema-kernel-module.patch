@@ -1,0 +1,54 @@
+From: Cinema Kernel Project <cinema@ishtar.local>
+Date: Sat, 21 Mar 2026 00:00:00 +0000
+Subject: [PATCH 2/2] ishtar: BoardConfig.mk: load cinema_mode.ko at second stage
+
+Add cinema_mode.ko to the vendor ramdisk second-stage module list so the
+/sys/kernel/cinema_mode/enable node is available during early boot and
+before any camera app opens.
+
+Also set the default I/O scheduler to BFQ in the kernel cmdline so it
+takes effect before init.cinema.rc's fs stage writes to sysfs.
+
+HOW TO APPLY:
+  Apply from the ishtar device tree root (device/xiaomi/ishtar/):
+    patch -p1 < 0002-BoardConfig.mk-cinema-kernel-module.patch
+  Or copy the relevant lines manually into BoardConfig.mk.
+  This patch cannot be applied with "git am" because it was generated
+  against a reference tree and does not carry blob index hashes.
+
+Signed-off-by: Cinema Kernel Project <cinema@ishtar.local>
+---
+ BoardConfig.mk | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/BoardConfig.mk b/BoardConfig.mk
+--- a/BoardConfig.mk
++++ b/BoardConfig.mk
+@@ -17,9 +17,23 @@ TARGET_SCREEN_DENSITY := 530
+ # Kernel Modules
+ device_second_stage_modules := \
+     fts_touch_spi.ko \
+-    xiaomi_touch.ko
++    xiaomi_touch.ko \
++    cinema_mode.ko
+
+ BOARD_VENDOR_RAMDISK_KERNEL_MODULES_LOAD += $(device_second_stage_modules)
+ BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(device_second_stage_modules)
+
++# ---- Cinema kernel cmdline ----
++# BFQ as default block scheduler so the first UFS write does not use
++# the kernel default (none/mq-deadline) before init.cinema.rc runs.
++# schedutil is the default CPU governor; cinema_mode.ko raises it to
++# performance when persist.cinema.mode=1.
++BOARD_KERNEL_CMDLINE += elevator=bfq
++
++# SELinux: label /sys/kernel/cinema_mode for the init property trigger.
++BOARD_VENDOR_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy/vendor
++BOARD_SEPOLICY_DIRS        += $(DEVICE_PATH)/sepolicy/vendor
++
++# genfscon for cinema_mode sysfs node (append to existing file_contexts or
++# add to sepolicy/vendor/genfs_contexts):
++#   genfscon sysfs /kernel/cinema_mode  u:object_r:cinema_mode_sysfs:s0
+
+ # OTA
+ TARGET_OTA_ASSERT_DEVICE := ishtar

@@ -439,4 +439,8 @@ static inline int thermal_zone_device_disable(struct thermal_zone_device *tz)
 { return -ENODEV; }
 #endif /* CONFIG_THERMAL */
 
+/* Exported by thermal_core.c for drivers that register devices in the
+ * thermal class (e.g. MI_THERMAL_MULTI_CHARGE). */
+extern struct class thermal_class;
+
 #endif /* __THERMAL_H__ */

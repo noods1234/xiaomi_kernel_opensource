@@ -1,0 +1,239 @@
+eND Rev A — Mechanical Cartridge Specification
+Cinema phone conversion, Sony LYT-900 / Xiaomi 14 Ultra
+================================================================
+
+DOCUMENT SCOPE
+──────────────
+This document defines the mechanical envelope, tolerances, and assembly
+requirements for the Rev A eND optical cartridge.  Dimensions are working
+targets for first-article fabrication.  All values subject to revision after
+sensor module survey.
+
+PREREQUISITE: Survey actual Xiaomi 13U/14U main camera module to measure:
+  a) Available Z-clearance between lens rear element and LYT-900 cover glass
+  b) Module footprint and flex routing constraints
+  c) Mechanical datum surfaces for cartridge seating
+
+Do not machine production parts before this survey.
+
+
+REFERENCE FRAME
+───────────────
+  +Z  : lens-to-sensor direction (optic axis)
+  +X  : along long axis of sensor (horizontal in landscape orientation)
+  +Y  : along short axis of sensor (vertical in landscape orientation)
+  Origin: center of LYT-900 active area, at sensor cover glass surface
+
+
+CARTRIDGE OVERALL DIMENSIONS (outer envelope)
+─────────────────────────────────────────────
+
+  Dimension       Nominal     Tolerance    Notes
+  ─────────────────────────────────────────────────────────────────────
+  Length (X)      16.0 mm     ±0.05 mm     Includes frame walls + flex exit
+  Width  (Y)      13.0 mm     ±0.05 mm     Includes frame walls
+  Thickness (Z)    2.40 mm    ±0.10 mm     See layer stack below
+  ─────────────────────────────────────────────────────────────────────
+  Corner radii                R 1.0 mm     All four corners, external
+
+
+LAYER STACK (internal, Z-axis, lens side → sensor side)
+────────────────────────────────────────────────────────
+
+  Layer                   Nominal   Tolerance   Material / Spec
+  ─────────────────────────────────────────────────────────────────────
+  AR window (front)        0.30 mm  ±0.02 mm    N-BK7 or fused silica
+                                                AR coating both surfaces
+                                                Ravg < 0.3% / surface
+                                                400–700 nm
+                                                Flatness: λ/4 @ 633 nm
+
+  Optical cement / gap     0.10 mm  ±0.03 mm    NOA-61 or equivalent,
+                                                or air with precision
+                                                spacer
+
+  LC cell assembly         0.90 mm  ±0.10 mm    LC-Tec PolarView eND
+  (dual-cell guest-host)                        (NBf2.0) or custom
+                                                equivalent
+                                                Target CA: 12×9.6 mm min
+
+  Optical cement / gap     0.10 mm  ±0.03 mm    Same as above
+
+  AR window (rear)         0.30 mm  ±0.02 mm    Same spec as front window
+  ─────────────────────────────────────────────────────────────────────
+  Total optical stack      1.70 mm  ±0.15 mm    (windows + cell + gaps)
+
+  Frame wall overhang       0.35 mm each side   Top/bottom frame proud
+  (front + rear)                                of optical stack by
+                                                ≤ 0.35 mm to serve as
+                                                handling protection
+
+  Total cartridge Z        2.40 mm  ±0.10 mm
+  ─────────────────────────────────────────────────────────────────────
+
+
+CLEAR APERTURE (CA)
+───────────────────
+
+  Parameter               Value       Notes
+  ─────────────────────────────────────────────────────────────────────
+  CA (X, horizontal)      12.0 mm     = sensor H 9.6 mm + 1.2 mm each
+  CA (Y, vertical)         9.6 mm     = sensor V 7.2 mm + 1.2 mm each
+  CA diagonal             15.4 mm
+  CA shape                Rectangular preferred; circular ≥ 15.4 mm
+                          dia accepted if cell vendor requires
+  CA edge blackening      Mandatory — see frame finish spec below
+  ─────────────────────────────────────────────────────────────────────
+
+
+FRAME MATERIAL AND FINISH
+──────────────────────────
+
+  Primary choice:   Black-anodized 6061-T6 aluminum
+                    Anodize: Type III hard, 25 µm minimum
+                    Color: matte black, Ra ≤ 1.6 µm on all non-optical faces
+
+  Alternative:      Black PEEK (Victrex 450G or equivalent)
+                    Use if thermal isolation from metal chassis is required
+                    Note: PEEK has lower CTE match to the LC cell substrate
+                    (typically borosilicate); verify no cell edge stress
+
+  Inner frame surfaces (light-trap faces):
+                    Light-absorbing coating, e.g. Acktar Fractal Black
+                    or similar carbon-based ultra-black treatment
+                    Reflectance < 0.5% at all angles > 5°
+
+  Optical surfaces: Do not coat with black — AR windows only
+
+
+FRAME FEATURES
+──────────────
+
+  1. Cell retention slots
+     Two M1.2 × 0.25 mm threaded inserts (stainless), accessible from
+     front (lens side).  Torque spec: 0.04 N·m maximum.
+     Cell must be replaceable without removing the sensor module.
+
+  2. Shim seats
+     Minimum 3 seats, located:
+       - Corner opposite flex exit (primary tilt reference)
+       - Remaining two non-flex-exit corners
+     Seat depth: 0.05 mm — 0.30 mm adjustable range (6 shims × 0.05 mm)
+     Shim material: stainless steel or brass, lapped flat within λ/4
+
+  3. Flex harness exit
+     One edge of the frame (nominally the +X / +Y corner edge to avoid
+     blocking module flex routes — confirm with physical survey).
+     Exit window: 4.5 mm wide × 1.0 mm tall
+     FFC/FPC connector: Molex PicoBlade 53048-0610 or equivalent
+       6 contacts, 1.25 mm pitch, SMD/THM, top-contact, 1.0 mm insulation
+     Connector located on inner face of frame wall, flush with cartridge rear
+
+  4. Anti-rotation feature
+     One 0.5 mm × 0.5 mm locating pin seat on rear face (sensor side) to
+     prevent rotational misalignment of cartridge on reinstall.
+     Corresponding pin on phone chassis mounting pad.
+
+  5. Gasket channel
+     Continuous groove, 0.8 mm wide × 0.4 mm deep, on rear face perimeter
+     for an EPDM or silicone O-ring gasket.
+     Purpose: dust seal between cartridge and phone chassis.
+     Not hermetic — allows pressure equalization.
+
+  6. Handling tab
+     One 2.0 mm wide × 1.0 mm tall feature on one long edge (opposite flex
+     exit) to allow cartridge removal with a spudger without tool-on-glass
+     contact.
+
+
+OPTICAL ELEMENT RETENTION
+──────────────────────────
+
+  The LC cell assembly is retained inside the frame by:
+    - Cell ledge shoulder (0.3 mm) on front frame face
+    - Two M1.2 retention screws through rear frame lip
+    - No adhesive bonding in Rev A (bond Rev B only after cell confirmed)
+
+  Cell-to-frame lateral clearance: 0.05 mm per side (slip fit, no bond)
+  Cell-to-frame Z-axis retention: rear screws + front ledge, no gap
+
+
+CLEARANCE TO SENSOR (Sony LYT-900)
+───────────────────
+
+  Minimum clearance, cartridge rear face to LYT-900 cover glass:
+    Nominal:    0.15 mm
+    Minimum:    0.10 mm  (hard limit — less risks contact under vibration)
+    Maximum:    0.50 mm  (more than this may cause vignetting at f/4.0 edges;
+                          model with ray-trace before finalizing spacer height)
+
+  Spacer material: polished stainless steel shim or precision-ground PEEK washer
+
+
+TILT SPECIFICATION
+──────────────────
+
+  Allowable cartridge tilt after shimming:  ≤ 0.10 mrad (both X and Y axes)
+  Shimming procedure:
+    1. Mount cartridge on chassis with all 3 shim seats engaged, zero shims
+    2. Measure tilt using collimated reference beam through CA
+    3. Calculate required shim stack for each seat to minimize tilt
+    4. Re-measure after shim insertion — iterate until ≤ 0.10 mrad
+    5. Document final shim configuration in build log
+
+  Flatness of carrier mounting surface (chassis side): ≤ λ/2 @ 633 nm
+  (polish/lap if raw machined surface exceeds this)
+
+
+MASS BUDGET
+───────────
+
+  Target cartridge mass:  ≤ 0.8 g (aluminum frame + windows + cell + screws)
+  Mass budget by element:
+    Frame (aluminum):       ~0.30 g
+    Front AR window:        ~0.10 g
+    Rear AR window:         ~0.10 g
+    LC cell assembly:       ~0.15 g
+    Screws, shims, gasket:  ~0.05 g
+    Flex connector:         ~0.05 g
+    Margin:                  0.05 g
+    ─────────────────────
+    Total:                  ~0.80 g
+
+
+COATING SUMMARY
+───────────────
+
+  Surface               Coating
+  ────────────────────────────────────────────────────────────────────
+  AR window, ext face   AR multilayer, Ravg < 0.3%/surface, 400–700 nm
+  AR window, int face   AR multilayer, same spec
+  Frame inner walls     Acktar Fractal Black or equivalent, R < 0.5%
+  Frame outer surface   Type III hard anodize, matte black
+  Light trap features   Acktar Fractal Black
+  Cell edge seal        Black silicone or Loctite 4305 (UV cure)
+  ────────────────────────────────────────────────────────────────────
+
+
+INSPECTION CRITERIA (first article)
+─────────────────────────────────────
+
+  Pass / fail criteria for first-article acceptance:
+
+  a) Outer dimensions within tolerance (CMM or calibrated caliper)
+  b) Clear aperture ≥ 11.8 mm × 9.4 mm measured optically (accept slight
+     under-size due to machining; undersize is recoverable, oversize is not)
+  c) Frame flatness on rear face: ≤ λ/2 @ 633 nm over full aperture
+  d) AR window surface quality: scratch-dig ≤ 40-20 (MIL-PRF-13830B)
+  e) No visible contamination in optical path after assembly
+  f) Cell retention: no lateral movement > 0.05 mm under 5 N shear
+  g) Flex harness: connector seated, no delamination, continuity on all 6 pins
+  h) Shim seats: accept 0.05 mm shim stock, no rattle under 10 g acceleration
+  i) Tilt after zero-shim mount: record as-built value (target ≤ 1.0 mrad
+     before shimming, ≤ 0.10 mrad after shimming)
+  j) Mass ≤ 0.85 g (5 g margin over target)
+
+
+REVISION HISTORY
+────────────────
+  Rev A  2026-03-25  Initial specification — Sony LYT-900 cinema phone conversion

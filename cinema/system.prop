@@ -1,0 +1,143 @@
+# system.prop — Cinema ROM system property reference for Xiaomi 14 Ultra (aurora)
+#
+# This file is a human-readable reference listing ALL cinema-mode properties
+# with explanatory comments.  It is NOT automatically imported by
+# device_cinema.mk; authoritative build-time property assignments live in
+# device_cinema.mk as PRODUCT_VENDOR_PROPERTIES / PRODUCT_SYSTEM_PROPERTIES.
+#
+# To include this file directly (adds additional properties not in
+# device_cinema.mk), add to device_cinema.mk:
+#   PRODUCT_SYSTEM_PROPERTIES += $(LOCAL_PATH)/cinema/system.prop
+# -----------------------------------------------------------------------
+
+# ---- Camera / HAL ----
+# Force Camera2 / HAL3 — required for MotionCam, FiLMiC, and all
+# apps using the Camera2 API for manual RAW capture.
+persist.camera.HAL3.enabled=1
+persist.camera.eis.enable=0
+
+# Raw capture — expose RAW16 and RAW10 Bayer streams to Camera2 clients.
+persist.camera.raw.enable=1
+
+# Raise the maximum in-flight capture requests so burst RAW sequences
+# do not stall while frames are being compressed by Venus.
+# MotionCam uses up to 8 in-flight frames at 4K/120fps to absorb
+# pipeline latency spikes.
+persist.camera.maxinflight=8
+
+# Force ZSL (Zero Shutter Lag) off by default for manual apps;
+# they manage their own capture pipelines.
+persist.camera.zsl.mode=0
+
+# ---- MotionCam / Sony LYT-900 cinema sensor integration ----
+# Sony LYT-900 sensor: 1-inch stacked BSI, 50MP (8192×6144), 4-lane MIPI CSI-2.
+# Community mod reference: https://github.com/Jip-Hop/xiaomi-14-ultra-raw-video-mod-guide/
+
+# Advertise FULL hardware level so Camera2 clients get manual sensor control
+# (MANUAL_SENSOR, MANUAL_POST_PROCESSING, RAW, BURST_CAPTURE).
+ro.camera.flush_Incomplete_captures=1
+persist.vendor.camera.HAL3.enabled=1
+
+# RAW10 "LN2 mode" — expose 10-bit RAW output alongside standard RAW16.
+# MotionCam will prefer RAW10 for lower noise and smaller files.
+persist.camera.raw10.enable=1
+
+# Fullres mode: advertise 8192×6144 capture capability (no binning).
+# This is the "fullres" community mod — bypasses 2×2 on-chip binning.
+persist.camera.res.fullres.enable=1
+
+# 4K120fps RAW: permit 120fps at 4K from LYT-900 sub-readout region.
+# Requires cinema_mode CPU pin active (persist.cinema.mode=1) and
+# all A720 + X4 cores pinned to max freq.
+persist.camera.video.4k120.enable=1
+
+# 8K30fps RAW: permit full-sensor 8192×6144 at 30fps RAW10 output.
+# Requires UFS 4.0 streaming path (≥360 MB/s sustained write).
+persist.camera.video.8k30.enable=1
+
+# DCG (Dual Conversion Gain): expose extended-DR modes to Camera2.
+# DCG4 = ~2 stops, DCG16 = ~4 stops of additional highlight headroom.
+persist.camera.dcg.enable=1
+
+# Sensor crop / unbinned zoom:
+# 1× full FOV | 2× centre crop | 5× telephoto crop (unbinned digital zoom).
+persist.camera.unbinned_zoom.enable=1
+
+# Disable temporal noise reduction — MotionCam handles this in post.
+persist.camera.tnr.enable=0
+
+# Disable MFNR (multi-frame NR) — MotionCam captures individual RAW frames.
+persist.camera.mfnr.enable=0
+
+# ---- Video codec ----
+# Enable hardware video encode/decode via Venus V4L2 driver.
+media.stagefright.enable-player=true
+media.stagefright.enable-aac=true
+media.stagefright.enable-record=true
+
+media.settings.xml=/vendor/etc/media_settings.xml
+
+# Prefer hardware codec; never fall back to software for camera output.
+media.stagefright.thumbnail.prefer_hw_codecs=1
+
+# ---- Audio ----
+# 32-bit / 192 kHz capture path via WCD938X.
+ro.config.media_vol_steps=100
+# Fluence is Qualcomm's voice CALL noise suppression (beam-forming, echo
+# cancellation, background noise gating).  It is tuned for voice intelligibility,
+# not transparent location audio.  On a cinema ROM it actively degrades the
+# WCD938X capture path by post-processing the microphone signal.  Both
+# voicecall and voicerecord must be false for unprocessed audio capture.
+persist.audio.fluence.voicecall=false
+persist.audio.fluence.voicerecord=false
+af.fast_track_multiplier=4
+
+# PCM offload for playback monitoring so the AP is free for capture.
+audio.offload.buffer.size.kb=256
+audio.offload.min.duration.secs=1
+audio.offload.pcm.16bit.enable=false
+audio.offload.pcm.24bit.enable=true
+
+# ---- Display ----
+# Target 120 Hz for live preview; cinema recording stays at source FPS.
+ro.surface_flinger.max_frame_buffer_acquired_buffers=3
+ro.sf.lcd_density=480
+debug.sf.enable_advanced_sf_phase_offset=1
+debug.sf.high_fps_early_gl_sf_phase_offset_ns=-2000000
+debug.sf.high_fps_early_sf_phase_offset_ns=-2000000
+
+# Keep display at full brightness during recording (no auto-dim).
+persist.display.hdr.enable=1
+
+# ---- Memory ----
+# Large page cache for RAW ring buffers.
+ro.config.large_heap=true
+
+# Do not kill camera/recording processes under memory pressure.
+ro.lmk.critical_upgrade=true
+ro.lmk.upgrade_pressure=90
+ro.lmk.downgrade_pressure=85
+
+# ---- Performance / thermal ----
+# Initial cinema mode state — 0 at boot, user activates via:
+# adb shell setprop persist.cinema.mode 1
+# or via any cinema app that sets this property.
+persist.cinema.mode=0
+
+# WALT scheduler hints for camera and media server threads.
+# Bias camera HAL thread toward big cores.
+ro.vendor.qti.sys.fw.bservice_enable=true
+vendor.perf.iop_v3.enable=true
+
+# ---- Misc ----
+# Disable automatic system app updates from Play Store during recording.
+ro.setupwizard.mode=OPTIONAL
+
+# USB: enable MTP + ADB simultaneously so captured files can be
+# pulled without stopping recording.
+persist.sys.usb.config=mtp,adb
+# ADB authentication (ro.adb.secure=1) requires manual on-screen approval
+# for every USB reconnect.  On a film set, cables get unplugged constantly.
+# A cinema operator cannot stop mid-take to tap "Allow" on the device screen.
+# Professional ROM = secure=0: rely on physical access control for the device.
+ro.adb.secure=0

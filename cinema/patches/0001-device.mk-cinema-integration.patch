@@ -1,0 +1,60 @@
+From: Cinema Kernel Project <cinema@ishtar.local>
+Date: Sat, 21 Mar 2026 00:00:00 +0000
+Subject: [PATCH 1/2] ishtar: device.mk: add cinema ROM integration
+
+Wire in the cinema init fragment, I/O tuner script, vendor properties,
+feature XML, and SELinux genfscon label for the cinema_mode sysfs node.
+
+HOW TO APPLY:
+  Apply from the ishtar device tree root (device/xiaomi/ishtar/):
+    patch -p1 < 0001-device.mk-cinema-integration.patch
+  Or copy the relevant lines manually into device.mk.
+  This patch cannot be applied with "git am" because it was generated
+  against a reference tree and does not carry blob index hashes.
+
+Signed-off-by: Cinema Kernel Project <cinema@ishtar.local>
+---
+ device.mk | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/device.mk b/device.mk
+--- a/device.mk
++++ b/device.mk
+@@ -14,6 +14,13 @@ $(call inherit-product, device/xiaomi/sm8550-common/common.mk)
+ # Get non-open-source specific aspects
+ $(call inherit-product, vendor/xiaomi/ishtar/ishtar-vendor.mk)
+
++# ---- Cinema ROM integration ----
++# Kernel: cinema optimisations live in kernel/xiaomi/sm8550 on
++#   branch claude/xiaomi-cinema-conversion-5AlqU
++# Runtime coordinator: /sys/kernel/cinema_mode/enable
++# Activation: setprop persist.cinema.mode 1
++# -------------------------------------------------------
++$(call inherit-product, device/xiaomi/ishtar/cinema/device_cinema.mk)
++
+ # Soong namespaces
+ PRODUCT_SOONG_NAMESPACES += \
+     $(LOCAL_PATH)
+@@ -37,6 +44,27 @@ PRODUCT_PACKAGES += \
+ # Parts
+ PRODUCT_PACKAGES += \
+     XiaomiIshtarParts
++
++# ---- Cinema init & scripts ----
++PRODUCT_COPY_FILES += \
++    $(LOCAL_PATH)/rootdir/etc/init.cinema.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/init.cinema.rc \
++    $(LOCAL_PATH)/rootdir/vendor/bin/cinema_io_tune.sh:$(TARGET_COPY_OUT_VENDOR)/bin/cinema_io_tune.sh
++
++# ---- Cinema feature declarations ----
++PRODUCT_COPY_FILES += \
++    frameworks/native/data/etc/android.hardware.camera.raw.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.raw.xml \
++    frameworks/native/data/etc/android.hardware.camera.manual_sensor.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.manual_sensor.xml \
++    frameworks/native/data/etc/android.hardware.camera.manual_post_processing.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.manual_post_processing.xml \
++    frameworks/native/data/etc/android.hardware.audio.pro.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.audio.pro.xml \
++    $(LOCAL_PATH)/configs/cinema/cinema_features.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/cinema_features.xml
++
++# ---- Cinema vendor properties ----
++TARGET_VENDOR_PROP += $(DEVICE_PATH)/configs/properties/cinema.prop
+
+ # Sensors
+ PRODUCT_COPY_FILES += \

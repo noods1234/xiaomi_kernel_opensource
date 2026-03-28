@@ -1,0 +1,30 @@
+# cinema.prop — vendor properties for cinema ROM on aurora
+# Included via: TARGET_VENDOR_PROP += $(DEVICE_PATH)/configs/properties/cinema.prop
+
+# ---- Camera ----
+persist.camera.HAL3.enabled=1
+persist.camera.raw.enable=1
+persist.camera.concurrent.streams=1
+persist.camera.maxinflight=8
+persist.camera.zsl.mode=0
+persist.camera.eis.enable=0
+
+# ---- Cinema mode (off at boot; activated by setprop persist.cinema.mode=1) ----
+persist.cinema.mode=0
+
+# ---- Memory ----
+ro.lmk.critical_upgrade=true
+ro.lmk.upgrade_pressure=90
+ro.lmk.downgrade_pressure=85
+
+# ---- Audio ----
+ro.config.media_vol_steps=100
+audio.offload.pcm.24bit.enable=true
+audio.offload.buffer.size.kb=256
+
+# ---- Performance ----
+vendor.perf.iop_v3.enable=true
+ro.vendor.qti.sys.fw.bservice_enable=true
+
+# ---- USB ----
+persist.sys.usb.config=mtp,adb

@@ -1,0 +1,8 @@
+# property_contexts — cinema mode property labels
+# Merged into the vendor sepolicy at build time.
+
+# Persistent cinema mode state (survives reboot)
+persist.cinema.             u:object_r:cinema_prop:s0
+
+# Runtime cinema mode state (cleared on reboot, set only by init)
+sys.cinema.                 u:object_r:sys_cinema_prop:s0

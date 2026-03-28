@@ -1,0 +1,329 @@
+eND Rev A-1 — Schematic Partitions and Signal-Level Notes
+Cinema phone conversion, Sony LYT-900 / Xiaomi 14 Ultra
+================================================================
+
+OVERVIEW
+────────
+The Rev A-1 driver board is partitioned into five schematic sheets, each
+independently reviewable and independently testable on the bench.
+
+  Sheet  Name                  Key devices
+  ─────────────────────────────────────────────────────────────────────
+  1      Power                 TPS65131, LDOs, bulk caps, ferrite EMI
+  2      MCU and comms         STM32U5, USB-CDC, UART, programming header
+  3      Sensors and DAC       TMP117, AD5696R, I²C, SPI
+  4      Analog output stage   OPA2197, ADG1419, AC drive generation
+  5      Flex interface        Connector, ESD, filter, test points
+  ─────────────────────────────────────────────────────────────────────
+
+
+SHEET 1: POWER
+──────────────
+
+  Input voltage:   4.2–5.5 V (USB VBUS from phone or grip battery)
+
+  TPS65131 (split-rail boost/inverting regulator)
+  ──────────────────────────────────────────────
+  Input: VIN = 4.2–5.5 V
+  Output 1: +VDRV = +15.0 V, 200 mA max
+  Output 2: −VDRV = −15.0 V, 200 mA max (inverted output path)
+  Switching frequency: set to 1.2 MHz (spread-spectrum if available in
+  this variant) — must not land on MIPI D-PHY clock harmonics for
+  the main camera module (confirm MIPI lane frequency before layout)
+
+  Output capacitors: 10 µF + 100 nF X7R each rail, minimum 25 V rating
+  EMI suppression: ferrite bead (Murata BLM18PG221SN1 or equivalent,
+  100 Ω @ 100 MHz) on each output rail before distribution
+
+  +3.3 V LDO (MCU and digital supply)
+  ────────────────────────────────────
+  Input: 5 V from USB VBUS
+  Output: 3.3 V, 200 mA (MCU + TMP117 + AD5696R digital)
+  Part: TI TLV757P or equivalent, SOT-23-5
+  Bypass: 10 µF + 100 nF at output
+
+  +3.3 V_ANA LDO (precision analog supply)
+  ──────────────────────────────────────────
+  Separate LDO for AD5696R AVDD and OPA2197 supply domain
+  Input: 5 V
+  Output: 3.3 V, 100 mA
+  Part: TI REF5030 used as precision reference for AD5696R, OR
+        dedicated AVDD LDO if AD5696R internal reference is used
+  Purpose: isolate DAC and op-amp supply from MCU switching noise
+  Bypass: 10 µF + 100 nF at output, additional 10 nF at each IC AVDD pin
+
+  Test points on Sheet 1:
+    TP_VIN, TP_VDRV_P, TP_VDRV_N, TP_3V3D, TP_3V3A, TP_GND
+
+  Design notes:
+  - Stitch GND plane with vias aggressively beneath TPS65131
+  - Separate analog GND polygon for OPA2197 / DAC domain; single-point
+    connection to digital GND at MCU GND pad
+  - Shield can over TPS65131 if EMI into MIPI lanes observed in Rev A-0
+  - Place bulk cap (47 µF ceramic or 100 µF tantalum) at board power entry
+
+
+SHEET 2: MCU AND COMMS
+───────────────────────
+
+  STM32U5 (supervisor MCU)
+  ─────────────────────────
+  Recommended part: STM32U575CIT6 (UFBGA132, 7×7 mm)
+  Alternatively for smaller board: STM32U535CEU6 (UFQFPN48, 7×7 mm)
+  Supply: 3.3 V (Sheet 1)
+  Crystal: 16 MHz HSE, CL = 10 pF, ESR < 50 Ω
+           (required for USB full-speed operation in Rev A-0 bench mode)
+  LSE: 32.768 kHz if RTC needed for logging timestamps
+
+  Peripheral assignments (Rev A-1):
+  ──────────────────────────────────
+    USART1      : Android host bridge (UART 115200–1000000 baud, 8N1)
+                  Pins: PA9 (TX), PA10 (RX)
+                  RS-level: 3.3 V LVTTL direct if MCU is in mod grip;
+                  add Si8621 isolator if ground loops with phone mainboard
+                  are a concern
+
+    USB_OTG_FS  : Rev A-0 bench mode host bridge (USB-CDC)
+                  Pins: PA11 (DM), PA12 (DP)
+                  ESD: PRTR5V0U2X or equivalent on each data line
+
+    SPI1        : AD5696R DAC
+                  Pins: PA5 (SCK), PA7 (MOSI), PA4 (NSS/CS)
+                  Frequency: 10 MHz max (AD5696R Fsclk max 50 MHz;
+                  limit to 10 MHz for first-article EMI margin)
+
+    I²C1        : TMP117 temperature sensor
+                  Pins: PB6 (SCL), PB7 (SDA)
+                  Pullups: 4.7 kΩ to 3.3 V
+                  Address: TMP117 ADD0 pin to GND → 0x48
+
+    GPIO out    : ADG1419 switch control (PA0)
+                  GPIO out    : AD5696R /RESET (PA1, active low)
+                  GPIO out    : status LED (green, PB0) — optional
+                  GPIO in     : FAULT input from TPS65131 /PG or thermal
+                                shutdown signal (PB1)
+
+  Programming header:
+    4-pin SWD: SWDIO, SWDCLK, nRST, GND
+    1.27 mm pitch, Tag-Connect TC2030-IDC or Cortex-M standard 10-pin
+    Accessible from board edge without disassembly
+
+  Boot mode:
+    BOOT0 tied to GND via 10 kΩ; solder bridge to 3.3 V for DFU mode
+    DFU mode (USB) is the field programming path; SWD is debug/dev only
+
+
+SHEET 3: SENSORS AND DAC
+──────────────────────────
+
+  TMP117 (cell temperature sensor)
+  ─────────────────────────────────
+  Supply: 3.3 V
+  Interface: I²C (Sheet 2 I²C1 bus)
+  Address: 0x48 (ADD0 = GND)
+  Bypass: 100 nF + 10 nF at VCC pin
+  Physical placement: This device is NOT on the control board.
+    It mounts on a small flex tail attached to the eND cartridge frame
+    (see Sheet 5 / flex interface).  The I²C lines route through the
+    flex harness pins 5 (SDA) and 6 (SCL).
+  Alert output: wire to MCU GPIO for interrupt-driven over-temperature
+    detection; threshold register set in firmware to 60°C (LC cell max
+    operating temperature; confirm with LC-Tec datasheet)
+
+  AD5696R (quad 16-bit DAC)
+  ─────────────────────────
+  Supply: AVDD = 3.3 V_ANA (Sheet 1)
+  Reference: internal 2.5 V reference (AD5696R -R suffix)
+             Output range = 0–2.5 V (×2 gain option not used in Rev A)
+  Interface: SPI (Sheet 2 SPI1)
+  Channels in use:
+    DAC A: Vsetpoint_A — setpoint for LC cell A output stage
+    DAC B: Vsetpoint_B — setpoint for LC cell B output stage
+    DAC C: Vcal_trim   — calibration trim (factory offset correction)
+    DAC D: Vmonitor    — test output, mirrors active setpoint for debug
+  /RESET: held low during power-on via RC delay (R=10kΩ, C=100nF),
+          then released by MCU GPIO (Sheet 2)
+  Bypass: 10 µF + 100 nF at AVDD; 100 nF at IOVCC (3.3 V digital)
+  Output impedance: Rout of DAC is ~11 kΩ; buffered by OPA2197 on Sheet 4
+
+  Signal levels at DAC outputs:
+    Vsetpoint_A, Vsetpoint_B: 0–2.5 V representing 0–Vmax drive request
+    Scale factor (firmware): 1 LSB = 2.5 V / 65535 ≈ 38 µV
+    Effective ND resolution at output: depends on cell Vrms curve slope;
+    expect ~0.01 stop per step in mid-range (more than adequate)
+
+
+SHEET 4: ANALOG OUTPUT STAGE
+─────────────────────────────
+
+  Purpose: Convert DAC DC setpoints to AC drive waveforms for the LC cells.
+
+  IMPORTANT DESIGN NOTE: The exact output stage topology must be validated
+  with the actual LC-Tec cell before finalizing this sheet. The component
+  choices below are based on LC-Tec published drive requirements (AC square
+  wave, 0–15 VRMS, no DC offset). Revise after bench characterization of
+  cell electrical behavior (capacitance, impedance vs frequency vs state).
+
+  OPA2197 (dual precision op amp)
+  ────────────────────────────────
+  Supply: ±VDRV rails (+15 V / −15 V from Sheet 1)
+  Configuration:
+    OPA2197_A: Level-shift buffer for cell A
+      - Non-inverting input: Vsetpoint_A from AD5696R
+      - Gain = 1 + R2/R1 (set for 0–2.5 V in → 0–10 VRMS out range first;
+        adjust after cell Vrms/T characterization)
+      - Output drives ADG1419 input for AC generation
+
+    OPA2197_B: Level-shift buffer for cell B (same topology)
+
+  Topology note for Rev A bench phase:
+    Rev A-0 uses the LCC-230 directly — this sheet is for Rev A-1 only.
+    For Rev A-1, start with a simple voltage-follower on the op-amp output
+    (gain = 1) and use the DAC's full 0–2.5 V range to the ADG1419.
+    The ADG1419 then switches the output between +Vsetpoint and −Vsetpoint
+    on alternate half-cycles to produce a bipolar AC drive.
+
+  ADG1419 (precision SPDT analog switch)
+  ───────────────────────────────────────
+  Supply: +VDRV (15 V) for switch rail, logic supply 3.3 V
+  Per channel (one per LC cell):
+    IN_A: +Vsetpoint (buffered OPA2197 output)
+    IN_B: −Vsetpoint (inverter or negative rail version)
+    Control: MCU GPIO (timer PWM output, frequency configurable)
+    OUT: to LC cell terminal via flex harness
+
+  AC drive generation:
+    MCU TIM1 PWM output drives ADG1419 control pin
+    Frequency: configurable 10–100 Hz (firmware parameter)
+    Duty cycle: 50% (enforced in firmware — any asymmetry introduces DC)
+    DC offset guard: firmware monitors drive symmetry; halts drive if
+      |V_avg| > 50 mV over a 10-cycle window (protects LC film from
+      electrolytic degradation)
+
+  Cell drive output spec:
+    Vrms = Vsetpoint × (duty correction factor) × switch efficiency
+    Maximum output: 12 VRMS (leave 3 V headroom below ±15 V rail)
+    Minimum output: 0.5 VRMS (below this, drive disabled, output = 0)
+
+  Protection:
+    Series 100 Ω resistor on each cell output line (limits current during
+    shorts or unexpected cell capacitance events)
+    Ferrite bead on each cell output (reduces RF coupling into phone chassis)
+    TVS diode at cell connector pins (Bourns CDSOD323-T05C or equivalent,
+    5.0 V clamp) — note: TVS clamp must be above drive Vpeak; select
+    appropriately for the actual operating Vrms after characterization
+
+  Test points on Sheet 4:
+    TP_VSET_A, TP_VSET_B: buffered DAC setpoints (DC)
+    TP_DRIVE_A, TP_DRIVE_B: AC drive outputs before flex connector
+    TP_VDRV_P, TP_VDRV_N: rail probe points
+
+
+SHEET 5: FLEX INTERFACE
+────────────────────────
+
+  Connector: Molex 53048-0610 (PicoBlade, 6-pos, 1.25 mm, SMD)
+  Mating cable: Molex 51021-0600 pre-crimped, 50 mm default length
+
+  Pin assignments:
+  ─────────────────────────────────────────────────────────────────────
+  Pin  Signal          Direction    Notes
+  ─────────────────────────────────────────────────────────────────────
+  1    DRIVE_A         OUT → cell   AC drive for LC cell A, 0–12 VRMS
+  2    DRIVE_B         OUT → cell   AC drive for LC cell B, 0–12 VRMS
+  3    DRIVE_GND       —            Drive return / shield
+  4    +3V3            OUT → sensor TMP117 VCC supply, 50 mA max
+  5    I2C_SDA         BIDIR        TMP117 data, 4.7 kΩ pullup on board
+  6    I2C_SCL         OUT          TMP117 clock, 4.7 kΩ pullup on board
+  ─────────────────────────────────────────────────────────────────────
+
+  ESD protection:
+    DRIVE_A, DRIVE_B: TVS as noted in Sheet 4
+    I2C_SDA, I2C_SCL: PRTR5V0U2X or ESDA6V1L (SOT-363) dual-line ESD
+    +3V3: ferrite bead + 100 nF local cap at connector pin
+
+  EMI / shield:
+    Drive GND (pin 3) connected to copper shield trace in flex cable
+    Shield grounded at board end only (float at cartridge end) to avoid
+    ground loop through the cartridge frame into the phone chassis
+
+  Flex cable routing requirements:
+    - Keep DRIVE_A/B wires away from I²C lines (crosstalk → false TMP117
+      reads at high drive frequencies; use ground-guard trace between)
+    - Bend radius minimum: 2 mm (based on FPC standard 0.1 mm thickness)
+    - Route away from MIPI camera flex and proximity to TPS65131
+
+
+OVERALL BUS SUMMARY
+────────────────────
+
+  Bus     Speed       Devices                   Sheet
+  ─────────────────────────────────────────────────────────────────────
+  I²C1    400 kHz     TMP117 (0x48)             2, 3, 5
+  SPI1    10 MHz      AD5696R                   2, 3
+  UART1   115200 bps  Android host (Rev A-1)    2
+  USB FS  12 Mbps     Bench host (Rev A-0)      2
+  TIM1    10–100 Hz   ADG1419 switch control    2, 4
+  ─────────────────────────────────────────────────────────────────────
+
+
+KNOWN ANALOG RISKS AND MITIGATIONS
+────────────────────────────────────
+
+  1. TPS65131 switching noise into MIPI lanes
+     Risk:   1.2 MHz switcher and harmonics couple through PCB/chassis
+             into camera MIPI lanes (~500 MHz MIPI D-PHY on SM8650)
+     Mitigation: shield can, spread-spectrum option on regulator,
+                 ferrite on VDRV outputs, keep TPS away from flex paths
+
+  2. Drive frequency ↔ sensor rolling shutter beat frequency
+     Risk:   LC drive at 50 Hz beats with 50 Hz line power and sensor
+             row timing, producing a visible horizontal band
+     Mitigation: firmware parameter to offset drive frequency from all
+                 integer multiples of fps × shutter angle; bench-measure
+                 visible flicker across all target frame rates before Rev A-1
+                 layout commitment
+
+  3. DC offset in AC drive path
+     Risk:   ADG1419 charge injection or asymmetric OPA2197 offset
+             introduces a residual DC component on the cell terminals;
+             accelerates LC film degradation
+     Mitigation: DC offset monitoring in firmware (ADC on drive output);
+                 automatic null correction via DAC C trim channel;
+                 hardware RC high-pass filter (C_series) may be added
+                 on cell output lines if firmware correction is insufficient
+                 (C_series creates I²R heating — characterize first)
+
+  4. Ground loop through cartridge metal frame to phone chassis
+     Risk:   Cartridge aluminum frame contacts phone chassis; drive return
+             current finds a path through chassis and back via USB ground,
+             injecting noise into phone analog references
+     Mitigation: isolate cartridge frame from phone chassis electrically
+                 (PEEK isolating washers at mounting points); connect DRIVE_GND
+                 to phone GND only through the flex cable pin 3 (one path)
+
+  5. Cell temperature exceeding 50°C
+     Risk:   LC-Tec cells typically rated to 60–70°C but transmittance curve
+             shifts with temperature; if phone chassis heat soaks cartridge
+             the LUT becomes invalid
+     Mitigation: TMP117 hardware alert at 55°C; firmware reduces ND range
+                 until T < 50°C; thermal barrier washer between cartridge
+                 frame and phone chassis (if PEEK frame not used)
+
+
+LAYOUT PRIORITIES (Rev A-1 PCB)
+─────────────────────────────────
+
+  1. TPS65131 island: keep switcher and its inductors/caps in one corner,
+     maximum copper poured GND beneath, away from all signal traces
+  2. Analog polygon: single GND connection to digital GND at MCU
+  3. Flex connector keepout: no vias within 1.5 mm of connector pads
+  4. Drive trace width: 0.2 mm minimum for DRIVE_A/B on PCB before flex;
+     maintain 50 Ω controlled impedance is not required here (low freq)
+  5. SWD header accessible from board edge without removing shield cans
+  6. Test points on all key signals, accessible with 1 mm probe tip
+
+
+REVISION HISTORY
+────────────────
+  Rev A  2026-03-25  Initial partition definition — Sony LYT-900 cinema phone

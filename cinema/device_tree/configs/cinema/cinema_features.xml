@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- cinema_features.xml
+     Feature declaration for Cinema ROM on Xiaomi 14 Ultra (aurora).
+     Copied to /vendor/etc/permissions/ at build time.
+     Apps can check these via PackageManager.hasSystemFeature(). -->
+<permissions>
+    <!-- Camera2 full-hardware level — required by MotionCam / FiLMiC -->
+    <feature name="android.hardware.camera.level.full" />
+    <feature name="android.hardware.camera.raw" />
+    <feature name="android.hardware.camera.manual_sensor" />
+    <feature name="android.hardware.camera.manual_post_processing" />
+    <feature name="android.hardware.camera.flash" />
+    <feature name="android.hardware.camera.autofocus" />
+
+    <!-- USB-C DisplayPort Alt Mode -->
+    <feature name="android.hardware.usb.host" />
+    <feature name="android.hardware.usb.accessory" />
+
+    <!-- Pro audio — 24-bit / 48kHz+ record paths -->
+    <feature name="android.hardware.audio.pro" />
+    <feature name="android.hardware.audio.low_latency" />
+</permissions>

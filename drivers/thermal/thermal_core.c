@@ -766,10 +766,11 @@ static void thermal_release(struct device *dev)
 	}
 }
 
-static struct class thermal_class = {
+struct class thermal_class = {
 	.name = "thermal",
 	.dev_release = thermal_release,
 };
+EXPORT_SYMBOL_GPL(thermal_class);
 
 static inline
 void print_bind_err_msg(struct thermal_zone_device *tz,
