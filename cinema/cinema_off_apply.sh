@@ -7,9 +7,14 @@
 
 # Restore ZRAM to standard 8 GB.
 if grep -q zram0 /proc/swaps; then
-    swapoff /dev/zram0
-    echo 8589934592 > /sys/block/zram0/disksize
-    swapon /dev/zram0
+    if ! swapoff /dev/zram0; then
+        echo "cinema_off_apply: swapoff failed — skipping ZRAM resize" > /dev/kmsg
+    else
+        echo 8589934592 > /sys/block/zram0/disksize
+        if ! swapon /dev/zram0; then
+            echo "cinema_off_apply: swapon failed after resize" > /dev/kmsg
+        fi
+    fi
 fi
 
 # Restore default swappiness.

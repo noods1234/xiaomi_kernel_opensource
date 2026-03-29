@@ -8,9 +8,14 @@
 # Expand ZRAM to 12 GB for cinema RAW ring buffer headroom.
 # Guard: zram cannot be resized while it has active swap.
 if grep -q zram0 /proc/swaps; then
-    swapoff /dev/zram0
-    echo 12884901888 > /sys/block/zram0/disksize
-    swapon /dev/zram0
+    if ! swapoff /dev/zram0; then
+        echo "cinema_on_apply: swapoff failed — skipping ZRAM resize" > /dev/kmsg
+    else
+        echo 12884901888 > /sys/block/zram0/disksize
+        if ! swapon /dev/zram0; then
+            echo "cinema_on_apply: swapon failed after resize" > /dev/kmsg
+        fi
+    fi
 fi
 
 # Drop page cache to reclaim RAM for DMA capture buffers.

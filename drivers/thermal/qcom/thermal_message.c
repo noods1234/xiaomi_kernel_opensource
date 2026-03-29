@@ -18,9 +18,9 @@
  *   board_sensor_temp_comp - board sensor temperature compensation
  *   cpu_nolimit_temp   - CPU no-limit temperature threshold
  *
- * Value ranges: The kernel does not enforce semantic ranges beyond
- * basic sanity bounds. Exact valid values are defined by the userspace
- * thermal daemon and are device-specific.
+ * Value ranges: The kernel does not enforce semantic ranges.  The thermal
+ * daemon owns all value semantics; kernel-side range checks would silently
+ * reject valid daemon writes if the encoding ever changed.
  */
 
 #define pr_fmt(fmt) "thermal_message: " fmt
@@ -71,9 +71,6 @@ static ssize_t sconfig_store(struct device *dev, struct device_attribute *attr,
 	ret = kstrtoint(strstrip((char *)buf), 0, &val);
 	if (ret)
 		return ret;
-	/* Range not confirmed from aurora/SM8650 source; 0–99 is a guard. */
-	if (val < 0 || val > 99)
-		return -EINVAL;
 	mutex_lock(&tm_dev->lock);
 	tm_dev->sconfig = val;
 	mutex_unlock(&tm_dev->lock);
@@ -102,9 +99,6 @@ static ssize_t temp_state_store(struct device *dev, struct device_attribute *att
 	ret = kstrtoint(strstrip((char *)buf), 0, &val);
 	if (ret)
 		return ret;
-	/* Range not confirmed from aurora/SM8650 source; 0–3 is a guard. */
-	if (val < 0 || val > 3)
-		return -EINVAL;
 	mutex_lock(&tm_dev->lock);
 	tm_dev->temp_state = val;
 	mutex_unlock(&tm_dev->lock);
@@ -133,8 +127,6 @@ static ssize_t flash_state_store(struct device *dev, struct device_attribute *at
 	ret = kstrtoint(strstrip((char *)buf), 0, &val);
 	if (ret)
 		return ret;
-	if (val < 0 || val > 99)
-		return -EINVAL;
 	mutex_lock(&tm_dev->lock);
 	tm_dev->flash_state = val;
 	mutex_unlock(&tm_dev->lock);
@@ -163,8 +155,6 @@ static ssize_t charger_temp_store(struct device *dev, struct device_attribute *a
 	ret = kstrtoint(strstrip((char *)buf), 0, &val);
 	if (ret)
 		return ret;
-	if (val < -200 || val > 1000)
-		return -EINVAL;
 	mutex_lock(&tm_dev->lock);
 	tm_dev->charger_temp = val;
 	mutex_unlock(&tm_dev->lock);
@@ -193,8 +183,6 @@ static ssize_t balance_mode_store(struct device *dev, struct device_attribute *a
 	ret = kstrtoint(strstrip((char *)buf), 0, &val);
 	if (ret)
 		return ret;
-	if (val < 0 || val > 99)
-		return -EINVAL;
 	mutex_lock(&tm_dev->lock);
 	tm_dev->balance_mode = val;
 	mutex_unlock(&tm_dev->lock);
@@ -223,8 +211,6 @@ static ssize_t torch_real_level_store(struct device *dev, struct device_attribut
 	ret = kstrtoint(strstrip((char *)buf), 0, &val);
 	if (ret)
 		return ret;
-	if (val < 0 || val > 999)
-		return -EINVAL;
 	mutex_lock(&tm_dev->lock);
 	tm_dev->torch_real_level = val;
 	mutex_unlock(&tm_dev->lock);
@@ -255,8 +241,6 @@ static ssize_t board_sensor_temp_comp_store(struct device *dev,
 	ret = kstrtoint(strstrip((char *)buf), 0, &val);
 	if (ret)
 		return ret;
-	if (val < -200 || val > 1000)
-		return -EINVAL;
 	mutex_lock(&tm_dev->lock);
 	tm_dev->board_sensor_temp_comp = val;
 	mutex_unlock(&tm_dev->lock);
@@ -287,8 +271,6 @@ static ssize_t cpu_nolimit_temp_store(struct device *dev,
 	ret = kstrtoint(strstrip((char *)buf), 0, &val);
 	if (ret)
 		return ret;
-	if (val < -200 || val > 1000)
-		return -EINVAL;
 	mutex_lock(&tm_dev->lock);
 	tm_dev->cpu_nolimit_temp = val;
 	mutex_unlock(&tm_dev->lock);

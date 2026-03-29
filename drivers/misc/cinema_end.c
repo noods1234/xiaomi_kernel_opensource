@@ -206,12 +206,10 @@ static ssize_t nd_setpoint_store(struct kobject *kobj,
 
 	mutex_lock(&end_lock);
 	end_nd_setpoint = val;
-	/*
-	 * TODO (Rev A-1): sysfs_notify(end_kobj, NULL, "nd_setpoint") so the
-	 * userspace daemon can poll() on this node and react to setpoint
-	 * changes without busy-waiting.
-	 */
 	mutex_unlock(&end_lock);
+
+	/* Wake any daemon poll()ing on this node for setpoint changes. */
+	sysfs_notify(end_kobj, NULL, "nd_setpoint");
 
 	return count;
 }
@@ -374,15 +372,15 @@ static ssize_t status_show(struct kobject *kobj,
 /* ------------------------------------------------------------------ */
 
 static struct kobj_attribute enable_attr =
-	__ATTR(enable,      0644, enable_show,      enable_store);
+	__ATTR(enable,      0600, enable_show,      enable_store);
 static struct kobj_attribute nd_setpoint_attr =
-	__ATTR(nd_setpoint, 0644, nd_setpoint_show, nd_setpoint_store);
+	__ATTR(nd_setpoint, 0600, nd_setpoint_show, nd_setpoint_store);
 static struct kobj_attribute mode_attr =
-	__ATTR(mode,        0644, mode_show,        mode_store);
+	__ATTR(mode,        0600, mode_show,        mode_store);
 static struct kobj_attribute nd_actual_attr =
-	__ATTR(nd_actual,   0644, nd_actual_show,   nd_actual_store);
+	__ATTR(nd_actual,   0600, nd_actual_show,   nd_actual_store);
 static struct kobj_attribute cell_temp_attr =
-	__ATTR(cell_temp,   0644, cell_temp_show,   cell_temp_store);
+	__ATTR(cell_temp,   0600, cell_temp_show,   cell_temp_store);
 static struct kobj_attribute status_attr =
 	__ATTR(status,      0444, status_show,      NULL);
 

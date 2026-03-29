@@ -6,9 +6,10 @@
 # ------------------------------------------------------------------
 
 on init
-    # Give the cinema_mode sysfs node correct ownership immediately
-    chown system system /sys/kernel/cinema_mode/enable
-    chmod 0644 /sys/kernel/cinema_mode/enable
+    # cinema_mode/enable is created by the kernel driver at 0600 (root rw only).
+    # Access control is enforced by CAP_SYS_ADMIN in the driver and by SELinux
+    # policy.  chown/chmod are not needed — changing the mode here would
+    # silently undo the driver's 0600 restriction.
 
 # BUG FIX 1: Moved UFS queue sysfs writes from "on fs" to "on boot".
 # "on fs" fires during the early filesystem-mount phase before UFS driver

@@ -22,7 +22,10 @@ done
 if ! grep -q zram0 /proc/swaps; then
     # BUG FIX 9: ZRAM block device node is /dev/zram0, not /dev/block/zram0.
     # /dev/block/zram0 does not exist on Android; swapon would fail with ENOENT.
-    echo 8589934592 > /sys/block/zram0/disksize && swapon /dev/zram0
+    echo 8589934592 > /sys/block/zram0/disksize
+    if ! swapon /dev/zram0; then
+        echo "cinema_io_tune: swapon /dev/zram0 failed" > /dev/kmsg
+    fi
 fi
 
 exit 0
