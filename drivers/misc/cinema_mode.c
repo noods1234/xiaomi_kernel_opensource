@@ -324,7 +324,7 @@ out:
 }
 
 static struct kobj_attribute enable_attr =
-	__ATTR(enable, 0644, enable_show, enable_store);
+	__ATTR(enable, 0600, enable_show, enable_store);
 
 static struct attribute *cinema_attrs[] = {
 	&enable_attr.attr,
@@ -442,9 +442,12 @@ static void __exit cinema_mode_exit(void)
 	 * find cinema_active == false and freq_req_active[cpu] == false and
 	 * return NOTIFY_DONE without touching any state.
 	 *
-	 * cpufreq_unregister_notifier() synchronises with in-flight notifier
-	 * invocations (SRCU), so after it returns no notifier code is
-	 * executing and none will start.
+	 * cpufreq_unregister_notifier() acquires the write side of the
+	 * blocking notifier chain's rwsem (cpufreq_policy_notifier_list is a
+	 * BLOCKING_NOTIFIER_HEAD — see drivers/cpufreq/cpufreq.c — not SRCU).
+	 * The write lock waits for any in-flight reader (notifier call in
+	 * progress holding the read lock) to complete, then removes our block.
+	 * After it returns, cinema_cpufreq_notifier() cannot execute.
 	 */
 	cpufreq_unregister_notifier(&cinema_cpufreq_nb,
 				    CPUFREQ_POLICY_NOTIFIER);
