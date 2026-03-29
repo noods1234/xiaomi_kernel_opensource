@@ -596,4 +596,23 @@ config CINEMA_MODE_KUNIT_TEST
 
 	  If unsure, say N.
 
+config FAKE_SM8650_CPUFREQ
+	tristate "Simulated SM8650 cpufreq topology (QEMU / testing only)"
+	depends on CPU_FREQ
+	help
+	  Registers four synthetic cpufreq policies mirroring the Snapdragon
+	  8 Gen 3 (SM8650) cluster layout so that cinema_mode.c can exercise
+	  its freq_qos_add/remove_request paths under QEMU or on any platform
+	  that lacks a real Qualcomm cpufreq driver.
+
+	  Policy 0 (CPUs 0-1)   A520-class:  300–2016 MHz
+	  Policy 2 (CPUs 2-3)   A720-lo:     300–2784 MHz
+	  Policy 4 (CPUs 4-6)   A720-hi:     300–2784 MHz
+	  Policy 7 (CPU  7)     X4-prime:    300–3187 MHz
+
+	  No actual frequency switching occurs.  Do NOT enable on real
+	  hardware — it would conflict with the platform cpufreq driver.
+
+	  If unsure, say N.
+
 endmenu
