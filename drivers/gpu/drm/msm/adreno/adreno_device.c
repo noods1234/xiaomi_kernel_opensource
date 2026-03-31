@@ -355,6 +355,35 @@ static const struct adreno_info gpulist[] = {
 		.init = a6xx_gpu_init,
 		.zapfw = "a640_zap.mdt",
 		.hwcg = a640_hwcg,
+	}, {
+		/*
+		 * Adreno 750 — SM8650 / Snapdragon 8 Gen 3
+		 * Chip revision 7.3.0.0, family ADRENO_7XX_GEN3.
+		 * GMU chipid 0x7090100.  GMEM 4 MiB.
+		 *
+		 * Full A7xx init (a7xx_gpu_init) landed upstream in 6.4+; this
+		 * entry uses a6xx_gpu_init as a structural placeholder so that
+		 * firmware-contract tests and future backport work have a device
+		 * table anchor.  Replace .init with a7xx_gpu_init once that code
+		 * is brought into this tree.
+		 *
+		 * Firmware (linux-firmware.git qcom/):
+		 *   SQE : gen70900_sqe.fw      (unsigned, shareable)
+		 *   GMU : gmu_gen70900.bin      (unsigned, shareable)
+		 *   ZAP : sm8650/gen70900_zap.mbn  (signed, SoC-specific)
+		 */
+		.rev = ADRENO_REV(7, 3, 0, ANY_ID),
+		.revn = 750,
+		.name = "A750",
+		.fw = {
+			[ADRENO_FW_SQE] = "gen70900_sqe.fw",
+			[ADRENO_FW_GMU] = "gmu_gen70900.bin",
+		},
+		.gmem = SZ_4M,
+		.inactive_period = DRM_MSM_INACTIVE_PERIOD,
+		.init = a6xx_gpu_init,
+		.zapfw = "sm8650/gen70900_zap.mbn",
+		.address_space_size = SZ_16G,
 	},
 };
 
@@ -375,6 +404,9 @@ MODULE_FIRMWARE("qcom/a619_gmu.bin");
 MODULE_FIRMWARE("qcom/a630_sqe.fw");
 MODULE_FIRMWARE("qcom/a630_gmu.bin");
 MODULE_FIRMWARE("qcom/a630_zap.mbn");
+MODULE_FIRMWARE("qcom/gen70900_sqe.fw");
+MODULE_FIRMWARE("qcom/gmu_gen70900.bin");
+MODULE_FIRMWARE("qcom/sm8650/gen70900_zap.mbn");
 
 static inline bool _rev_match(uint8_t entry, uint8_t id)
 {

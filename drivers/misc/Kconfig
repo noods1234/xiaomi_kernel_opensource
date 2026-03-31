@@ -615,4 +615,24 @@ config FAKE_SM8650_CPUFREQ
 
 	  If unsure, say N.
 
+config FAKE_A750_HW
+	tristate "Fake Adreno 750 GMU/HFI hardware simulation"
+	depends on DEBUG_FS
+	default n
+	help
+	  Simulates the Adreno 750 (SM8650) GPU Management Unit hardware
+	  environment for pre-device firmware-contract testing under QEMU.
+
+	  On module load, runs a full 6-step GMU cold-boot self-test:
+	  CM3 reset release → FW_INIT poll → HFI queue init → HFI_CTRL_INIT →
+	  HFI_CTRL_STATUS poll → 6 HFI boot messages (INIT/FW_VERSION/
+	  BW_TABLE/PERF_TABLE/START/CORE_FW_START) with ACK verification.
+
+	  Exposes /sys/kernel/debug/fake_a750/mmio_log with a complete trace
+	  of all simulated register accesses.
+
+	  NOT for production use. Safe to load on any kernel/architecture.
+
+	  If unsure, say N.
+
 endmenu
