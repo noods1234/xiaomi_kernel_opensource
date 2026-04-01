@@ -357,32 +357,44 @@ static const struct adreno_info gpulist[] = {
 		.hwcg = a640_hwcg,
 	}, {
 		/*
-		 * Adreno 750 — SM8650 / Snapdragon 8 Gen 3
-		 * Chip revision 7.3.0.0, family ADRENO_7XX_GEN3.
-		 * GMU chipid 0x7090100.  GMEM 4 MiB.
+		 * Adreno 750 — SM8650 / Snapdragon 8 Gen 3 ("Pineapple")
 		 *
-		 * Full A7xx init (a7xx_gpu_init) landed upstream in 6.4+; this
-		 * entry uses a6xx_gpu_init as a structural placeholder so that
-		 * firmware-contract tests and future backport work have a device
-		 * table anchor.  Replace .init with a7xx_gpu_init once that code
-		 * is brought into this tree.
+		 * KGSL identifier: gen7_9_0 (qcom,adreno-gpu-gen7-9-0)
+		 * Chip revision:   ADRENO_REV(7, 9, 0, ANY_ID)  [corrected from
+		 *                  earlier 7.3.0 assumption; gen7_9_0 in KGSL
+		 *                  matches firmware prefix gen70900]
+		 * GMEM:            3 MiB (3 × SZ_1M) — from KGSL gpulist
+		 * DDR channels:    4
+		 * GMU hub clk:     200 MHz
 		 *
-		 * Firmware (linux-firmware.git qcom/):
-		 *   SQE : gen70900_sqe.fw      (unsigned, shareable)
-		 *   GMU : gmu_gen70900.bin      (unsigned, shareable)
-		 *   ZAP : sm8650/gen70900_zap.mbn  (signed, SoC-specific)
+		 * This tree (6.1.25) predates upstream A7xx msm-drm support
+		 * (landed 6.4+).  a6xx_gpu_init is used as a structural
+		 * placeholder.  On SM8650 production kernels the GPU is driven
+		 * by KGSL (drivers/gpu/msm/) which uses adreno_gen7_9_0_hwsched_
+		 * gpudev with the hwsched HFI path — not this entry.
+		 *
+		 * *** DO NOT use this entry on real SM8650 hardware with
+		 * *** CONFIG_DRM_MSM enabled: a6xx_gpu_init on A7xx hardware
+		 * *** will program wrong register offsets and likely crash.
+		 * *** Set CONFIG_DRM_MSM=n in any SM8650 production .config.
+		 *
+		 * Firmware (linux-firmware.git qcom/ — from KGSL gpulist):
+		 *   SQE : gen70900_sqe.fw        (unsigned, shareable)
+		 *   GMU : gmu_gen70900.bin        (unsigned, shareable)
+		 *   AQE : gen70900_aqe.fw         (Async Queue Engine, gen7_9_0+)
+		 *   ZAP : gen70900_zap.mbn        (signed, SoC-specific)
 		 */
-		.rev = ADRENO_REV(7, 3, 0, ANY_ID),
+		.rev = ADRENO_REV(7, 9, 0, ANY_ID),
 		.revn = 750,
 		.name = "A750",
 		.fw = {
 			[ADRENO_FW_SQE] = "gen70900_sqe.fw",
 			[ADRENO_FW_GMU] = "gmu_gen70900.bin",
 		},
-		.gmem = SZ_4M,
+		.gmem = 3 * SZ_1M,
 		.inactive_period = DRM_MSM_INACTIVE_PERIOD,
 		.init = a6xx_gpu_init,
-		.zapfw = "sm8650/gen70900_zap.mbn",
+		.zapfw = "gen70900_zap.mbn",
 		.address_space_size = SZ_16G,
 	},
 };
@@ -406,7 +418,8 @@ MODULE_FIRMWARE("qcom/a630_gmu.bin");
 MODULE_FIRMWARE("qcom/a630_zap.mbn");
 MODULE_FIRMWARE("qcom/gen70900_sqe.fw");
 MODULE_FIRMWARE("qcom/gmu_gen70900.bin");
-MODULE_FIRMWARE("qcom/sm8650/gen70900_zap.mbn");
+MODULE_FIRMWARE("qcom/gen70900_aqe.fw");
+MODULE_FIRMWARE("qcom/gen70900_zap.mbn");
 
 static inline bool _rev_match(uint8_t entry, uint8_t id)
 {
