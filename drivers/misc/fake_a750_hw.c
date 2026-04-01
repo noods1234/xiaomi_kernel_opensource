@@ -183,6 +183,25 @@ static void gmu_write(u32 word_off, u32 val)
 		wake_up(&hfi_event_wq);
 }
 
+static u32 gpu_read(u32 word_off)
+{
+	u32 val;
+
+	if (word_off >= GPU_REGS_WORDS)
+		return 0;
+	val = gpu_regs[word_off];
+	mmio_log_append('R', word_off, val);
+	return val;
+}
+
+static void gpu_write(u32 word_off, u32 val)
+{
+	if (word_off >= GPU_REGS_WORDS)
+		return;
+	gpu_regs[word_off] = val;
+	mmio_log_append('W', word_off, val);
+}
+
 /* -------------------------------------------------------------------------
  * Layer 3 — GMU boot state machine kthread
  * ---------------------------------------------------------------------- */
@@ -473,11 +492,14 @@ static int mmio_log_show(struct seq_file *m, void *unused)
 
 	for (i = 0; i < count; i++) {
 		struct mmio_entry *e = &mmio_log[(start + i) % MMIO_LOG_SIZE];
-		/* Mark registers outside the known GMU control range */
-		char pfx = (e->off >= REG_CM3_ITCM_START &&
-			    e->off < GMU_REGS_WORDS) ? ' ' : '?';
-		seq_printf(m, "%c%c %05x %08x\n",
-			   pfx, e->op, e->off * 4, e->val);
+		/* Mark registers outside known GMU/GPU ranges with '?' prefix */
+		bool unknown = !(e->off < GMU_REGS_WORDS);
+		if (unknown)
+			seq_printf(m, "?%c %x %x\n",
+				   e->op, e->off, e->val);
+		else
+			seq_printf(m, "%c %x %x\n",
+				   e->op, e->off, e->val);
 	}
 	return 0;
 }
