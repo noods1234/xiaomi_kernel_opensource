@@ -137,7 +137,15 @@ int qcom_iommu_get_asid_nr(struct iommu_domain *domain);
 
 int qcom_iommu_set_secure_vmid(struct iommu_domain *domain, enum vmid vmid);
 
+#if IS_ENABLED(CONFIG_QCOM_SMMU_PROXY)
 int qcom_iommu_set_fault_model(struct iommu_domain *domain, int fault_model);
+#else
+static inline int qcom_iommu_set_fault_model(struct iommu_domain *domain,
+		int fault_model)
+{
+	return -EINVAL;
+}
+#endif
 
 int qcom_iommu_set_fault_handler_irq(struct iommu_domain *domain,
 		fault_handler_irq_t handler_irq, void *token);

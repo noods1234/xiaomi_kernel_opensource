@@ -22,6 +22,19 @@ enum feature_code {
 	SOCINFO_FC_AH,
 	SOCINFO_FC_EXT_RESERVE,
 
+	/* Sub-part feature codes (W-series, added in newer KGSL/socinfo) */
+	SOCINFO_FC_W0 = 0xe1,
+	SOCINFO_FC_W1,
+	SOCINFO_FC_W2,
+	SOCINFO_FC_W3,
+	SOCINFO_FC_W4,
+	SOCINFO_FC_W5,
+	SOCINFO_FC_W6,
+	SOCINFO_FC_W7,
+	SOCINFO_FC_W8,
+	SOCINFO_FC_W9,
+	SOCINFO_FC_SUBPART_RESERVE,
+
 	/* Internal feature code */
 	SOCINFO_FC_Y0 = 0xf1,
 	SOCINFO_FC_Y1,

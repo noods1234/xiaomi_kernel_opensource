@@ -22,10 +22,17 @@ enum branch_mem_flags {
 
 int qcom_clk_get_voltage(struct clk *clk, unsigned long rate);
 int qcom_clk_set_flags(struct clk *clk, unsigned long flags);
+#if IS_ENABLED(CONFIG_COMMON_CLK_QCOM)
 void qcom_clk_dump(struct clk *clk, struct regulator *regulator,
 		   bool calltrace);
 void qcom_clk_bulk_dump(int num_clks, struct clk_bulk_data *clks,
 			struct regulator *regulator, bool calltrace);
+#else
+static inline void qcom_clk_dump(struct clk *clk, struct regulator *regulator,
+		bool calltrace) {}
+static inline void qcom_clk_bulk_dump(int num_clks, struct clk_bulk_data *clks,
+		struct regulator *regulator, bool calltrace) {}
+#endif
 int qcom_clk_crm_set_rate(struct clk *clk,
 			  enum crm_drv_type client_type, u32 client_idx,
 			  u32 pwr_st, unsigned long rate);

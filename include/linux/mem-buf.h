@@ -21,7 +21,14 @@
 struct mem_buf_vmperm *to_mem_buf_vmperm(struct dma_buf *dmabuf);
 
 /* Returns true if the local VM has exclusive access and is the owner */
+#if IS_ENABLED(CONFIG_QCOM_MEM_BUF)
 bool mem_buf_dma_buf_exclusive_owner(struct dma_buf *dmabuf);
+#else
+static inline bool mem_buf_dma_buf_exclusive_owner(struct dma_buf *dmabuf)
+{
+	return false;
+}
+#endif
 
 /*
  * Returns the Virtual Machine vmids & permissions of the dmabuf. Can't be
@@ -33,8 +40,16 @@ int mem_buf_dma_buf_get_vmperm(struct dma_buf *dmabuf, const int **vmids,
  * Returns a copy of the Virtual Machine vmids & permissions of the dmabuf.
  * The caller must kfree() when finished.
  */
+#if IS_ENABLED(CONFIG_QCOM_MEM_BUF)
 int mem_buf_dma_buf_copy_vmperm(struct dma_buf *dmabuf, int **vmids, int **perms,
 		int *nr_acl_entries);
+#else
+static inline int mem_buf_dma_buf_copy_vmperm(struct dma_buf *dmabuf, int **vmids,
+		int **perms, int *nr_acl_entries)
+{
+	return -EINVAL;
+}
+#endif
 
 /*
  * Returns 0 if @dmabuf has a valid memparcel handle and stores it in
