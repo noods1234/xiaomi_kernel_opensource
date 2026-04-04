@@ -709,7 +709,12 @@ static void kgsl_pool_shrinker_init(void)
 
 static void kgsl_pool_shrinker_close(void)
 {
-	unregister_shrinker(kgsl_driver.pool_shrinker);
+	/* Guard against NULL: shrinker is only registered when the DT node
+	 * "qcom,gpu-mempools" exists.  Without real SM8650 hardware (e.g. in
+	 * QEMU), kgsl_probe_page_pools() returns early leaving pool_shrinker
+	 * NULL, so calling unregister_shrinker(NULL) would oops. */
+	if (kgsl_driver.pool_shrinker)
+		unregister_shrinker(kgsl_driver.pool_shrinker);
 }
 #endif
 
