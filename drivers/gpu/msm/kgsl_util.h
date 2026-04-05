@@ -296,14 +296,12 @@ static inline int qcom_scm_kgsl_init_regs(u32 gpu_req)
 #endif
 #endif /* CONFIG_QCOM_KGSL_UPSTREAM && !CONFIG_QCOM_SCM */
 
-#ifdef CONFIG_QCOM_KGSL_UPSTREAM
 /**
  * kgsl_get_ddrtype - Type of ddr on the current device
  *
  * Return: ddr type on success or negative error on failure.
  */
 int kgsl_get_ddrtype(void);
-#endif
 
 /**
  * isdb_write - Program isdb registers to issue break commands to SP
