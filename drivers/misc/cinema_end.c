@@ -182,42 +182,38 @@ static ssize_t enable_store(struct kobject *kobj,
 			    struct kobj_attribute *attr,
 			    const char *buf, size_t count)
 {
-	int val;
+	bool on;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	if (kstrtoint(buf, 10, &val))
+	if (kstrtobool(buf, &on))
 		return -EINVAL;
-
-	val = !!val;
 
 	mutex_lock(&end_lock);
 
-	if (val == end_active)
+	if (on == end_active)
 		goto out;
 
-	end_active = val;
-	if (!val)
+	end_active = on;
+	if (!on)
 		end_fault = false;	/* clear fault on explicit disable */
 
 	if (end_hw_ops && end_hw_ops->enable) {
-		int hw_ret = end_hw_ops->enable(val);
+		int hw_ret = end_hw_ops->enable(on);
 
 		if (hw_ret)
-			pr_warn("cinema_end: hw enable(%d) failed: %d\n", val, hw_ret);
+			pr_warn("cinema_end: hw enable(%d) failed: %d\n", on, hw_ret);
 	}
 
 	/*
 	 * TODO (Rev A-1): propagate to cinema_mode performance coordinator.
-	 * See "Integration with cinema_mode" in the file header for options.
-	 *
-	 * When val == 1, also activate cinema_mode (CPU pin, latency QoS,
-	 * wakeup source).  When val == 0 and cinema_mode was activated by us,
-	 * release it — but only if the operator hasn't independently enabled
-	 * cinema_mode.  Track ownership with a flag.
 	 */
-	pr_info("cinema_end: eND hardware %s\n", val ? "active" : "standby");
+	if (end_hw_ops)
+		pr_info("cinema_end: eND hardware %s\n", on ? "active" : "standby");
+	else
+		pr_debug("cinema_end: eND state %s (stub — no hardware backend)\n",
+			 on ? "active" : "standby");
 
 out:
 	mutex_unlock(&end_lock);

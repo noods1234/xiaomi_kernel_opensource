@@ -20,19 +20,6 @@ bool allow_vram_carveout = false;
 MODULE_PARM_DESC(allow_vram_carveout, "Allow using VRAM Carveout, in place of IOMMU");
 module_param_named(allow_vram_carveout, allow_vram_carveout, bool, 0600);
 
-/*
- * A750 (ADRENO_7XX_GEN3 / SM8650) requires the KGSL hwsched path
- * (CONFIG_QCOM_KGSL, drivers/gpu/msm/).  The DRM MSM a6xx driver has no
- * support for gen7_9_0 and a6xx_gmu.c has no knowledge of ADRENO_7XX_GEN3,
- * so binding through this driver would silently take wrong GMU init paths
- * and likely panic.  Fail probe loudly instead.
- */
-static struct msm_gpu *a750_msm_gpu_init_stub(struct drm_device *dev)
-{
-	dev_err(dev->dev,
-		"A750 requires CONFIG_QCOM_KGSL, not CONFIG_DRM_MSM\n");
-	return ERR_PTR(-ENODEV);
-}
 
 static const struct adreno_info gpulist[] = {
 	{
@@ -536,36 +523,11 @@ static const struct adreno_info gpulist[] = {
 		.zapfw = "a740_zap.mdt",
 		.hwcg = a740_hwcg,
 		.address_space_size = SZ_16G,
-	}, {
-		/*
-		 * A750 / gen7_9_0 — Adreno 750 on SM8650 (Snapdragon 8 Gen 3)
-		 * GMEM: 3 MiB.  GMU firmware: gmu_gen70900.bin.
-		 * AQE firmware (new in gen7_9_0): gen70900_aqe.fw.
-		 *
-		 * The chip ID is registered for identification purposes only.
-		 * Probe is intentionally failed via a750_msm_gpu_init_stub —
-		 * use CONFIG_QCOM_KGSL on real SM8650 hardware.
-		 */
-		.chip_ids = ADRENO_CHIP_IDS(0x43090a01),
-		.family = ADRENO_7XX_GEN3,
-		.fw = {
-			[ADRENO_FW_SQE] = "gen70900_sqe.fw",
-			[ADRENO_FW_GMU] = "gmu_gen70900.bin",
-		},
-		.gmem = 3 * SZ_1M,
-		.inactive_period = DRM_MSM_INACTIVE_PERIOD,
-		.quirks = ADRENO_QUIRK_HAS_CACHED_COHERENT |
-			  ADRENO_QUIRK_HAS_HW_APRIV,
-		.init = a750_msm_gpu_init_stub,
-		.zapfw = "gen70900_zap.mbn",
-		.address_space_size = SZ_16G,
 	},
+	/* A750 / SM8650 (Snapdragon 8 Gen 3) is NOT supported by DRM MSM.
+	 * Use CONFIG_QCOM_KGSL (drivers/gpu/msm/) on real SM8650 hardware. */
 };
 
-MODULE_FIRMWARE("qcom/gen70900_sqe.fw");
-MODULE_FIRMWARE("qcom/gmu_gen70900.bin");
-MODULE_FIRMWARE("qcom/gen70900_aqe.fw");
-MODULE_FIRMWARE("qcom/gen70900_zap.mbn");
 MODULE_FIRMWARE("qcom/a300_pm4.fw");
 MODULE_FIRMWARE("qcom/a300_pfp.fw");
 MODULE_FIRMWARE("qcom/a330_pm4.fw");

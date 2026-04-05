@@ -287,7 +287,7 @@ static ssize_t enable_store(struct kobject *kobj,
 			     struct kobj_attribute *attr,
 			     const char *buf, size_t count)
 {
-	int val;
+	bool on;
 	ssize_t ret = count;
 
 	/* Pegging all CPUs to maximum frequency is a privileged operation that
@@ -297,17 +297,19 @@ static ssize_t enable_store(struct kobject *kobj,
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	if (kstrtoint(buf, 10, &val))
+	/* kstrtobool accepts "0"/"1"/"y"/"n"/"on"/"off" and rejects everything
+	 * else, preventing silent treatment of "-1" or arbitrary integers as
+	 * "enable".
+	 */
+	if (kstrtobool(buf, &on))
 		return -EINVAL;
-
-	val = !!val;
 
 	mutex_lock(&cinema_lock);
 
-	if (val == cinema_active)
+	if (on == cinema_active)
 		goto out;
 
-	if (val) {
+	if (on) {
 		if (cinema_activate()) {
 			ret = -EIO;
 			goto out;
@@ -316,7 +318,7 @@ static ssize_t enable_store(struct kobject *kobj,
 		cinema_deactivate();
 	}
 
-	cinema_active = val;
+	cinema_active = on;
 
 out:
 	mutex_unlock(&cinema_lock);

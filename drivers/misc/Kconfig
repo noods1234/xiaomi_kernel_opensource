@@ -635,3 +635,4 @@ config FAKE_SM8650_CPUFREQ
 
 	  If unsure, say N.
 
+endmenu
