@@ -15,9 +15,6 @@
 #else
 #include <linux/qcom_scm.h>
 #endif
-#if IS_ENABLED(CONFIG_QCOM_SCM_ADDON)
-#include <linux/firmware/qcom/qcom_scm_addon.h>
-#endif
 #include <linux/slab.h>
 
 #include "adreno.h"

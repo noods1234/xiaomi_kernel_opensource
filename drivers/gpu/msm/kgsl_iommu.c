@@ -22,9 +22,6 @@
 #else
 #include <linux/qcom_scm.h>
 #endif
-#if IS_ENABLED(CONFIG_QCOM_SCM_ADDON)
-#include <linux/firmware/qcom/qcom_scm_addon.h>
-#endif
 #include <linux/random.h>
 #include <linux/regulator/consumer.h>
 #include <soc/qcom/secure_buffer.h>
@@ -1443,17 +1440,10 @@ static void _enable_gpuhtw_llc(struct kgsl_mmu *mmu, struct iommu_domain *domain
 		iommu_set_pgtable_quirks(domain, IO_PGTABLE_QUIRK_ARM_OUTER_WBWA);
 }
 
-#if (KERNEL_VERSION(6, 13, 0) <= LINUX_VERSION_CODE) || !defined(CONFIG_QCOM_SCM_ADDON)
 static int _kgsl_set_smmu_aperture(u32 num_context_bank)
 {
 	return qcom_scm_set_gpu_smmu_aperture(num_context_bank);
 }
-#else
-static int _kgsl_set_smmu_aperture(u32 num_context_bank)
-{
-	return qcom_scm_kgsl_set_smmu_aperture(num_context_bank);
-}
-#endif
 
 int kgsl_set_smmu_aperture(struct kgsl_device *device,
 		struct kgsl_iommu_context *context)

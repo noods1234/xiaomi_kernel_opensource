@@ -102,9 +102,9 @@ static inline void qtee_shmbridge_free_shm(struct qtee_shm *shm) { }
 #endif
 
 /* DCvS SCM stubs: these functions are BSP-only and not in the upstream
- * qcom_scm driver.  Provide stubs when building against an upstream kernel
- * that lacks the CONFIG_QCOM_SCM_ADDON BSP extension. */
-#if IS_ENABLED(CONFIG_QCOM_KGSL_UPSTREAM) && !IS_ENABLED(CONFIG_QCOM_SCM_ADDON)
+ * qcom_scm driver.  Provide stubs unconditionally when building against
+ * an upstream kernel, as these functions are never present there. */
+#if IS_ENABLED(CONFIG_QCOM_KGSL_UPSTREAM)
 static inline int qcom_scm_io_reset(void)
 {
 	return -EINVAL;

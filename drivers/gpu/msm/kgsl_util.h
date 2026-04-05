@@ -279,7 +279,9 @@ static inline void kgsl_qcom_va_md_unregister(struct kgsl_device *device)
  *
  * qcom_scm_pas_shutdown_retry is in upstream SCM — only stub when absent.
  *
- * The following are BSP-only and NEVER in upstream SCM; always need stubs:
+ * The following are BSP-only and NEVER present in the upstream qcom_scm
+ * driver; stubs are unconditionally required when building against an
+ * upstream kernel:
  *   qcom_scm_kgsl_init_regs, qcom_scm_kgsl_set_smmu_lpac_aperture,
  *   qcom_scm_set_gpu_smmu_aperture
  */
@@ -290,7 +292,7 @@ static inline int qcom_scm_pas_shutdown_retry(u32 peripheral)
 }
 #endif /* CONFIG_QCOM_KGSL_UPSTREAM && !CONFIG_QCOM_SCM */
 
-#if defined(CONFIG_QCOM_KGSL_UPSTREAM) && !IS_ENABLED(CONFIG_QCOM_SCM_ADDON)
+#if defined(CONFIG_QCOM_KGSL_UPSTREAM)
 /* BSP-only SCM calls — not present in upstream qcom_scm */
 static inline int qcom_scm_kgsl_init_regs(u32 gpu_req)
 {
@@ -304,7 +306,7 @@ static inline int qcom_scm_set_gpu_smmu_aperture(unsigned int num_context_bank)
 {
 	return -EINVAL;
 }
-#endif /* CONFIG_QCOM_KGSL_UPSTREAM && !CONFIG_QCOM_SCM_ADDON */
+#endif /* CONFIG_QCOM_KGSL_UPSTREAM */
 
 #ifdef CONFIG_QCOM_KGSL_UPSTREAM
 /**

@@ -39,6 +39,13 @@
 #include <linux/slab.h>
 #include <linux/seq_file.h>
 #include <linux/atomic.h>
+#include <linux/kobject.h>
+#include <linux/sysfs.h>
+
+/* -------------------------------------------------------------------------
+ * A750 chip identification
+ * ---------------------------------------------------------------------- */
+#define ADRENO_CHIP_ID_A750	0x43090a01u
 
 /* -------------------------------------------------------------------------
  * Size constants
@@ -399,6 +406,10 @@ static bool selftest = true;
 module_param(selftest, bool, 0444);
 MODULE_PARM_DESC(selftest, "Run GMU boot self-test on module load (default: 1)");
 
+/* Self-test outcome — written by selftest_thread, read by sysfs */
+static bool self_test_passed;
+static char self_test_fail_reason[128];
+
 static const u8 boot_msg_ids[] = {
 	HFI_H2F_MSG_INIT,
 	HFI_H2F_MSG_FW_VERSION,
@@ -438,6 +449,9 @@ static int selftest_thread(void *unused)
 		msleep(1);
 	}
 	pr_err("fake_a750: FAIL step 4 — CM3_FW_INIT_RESULT timeout\n");
+	snprintf(self_test_fail_reason, sizeof(self_test_fail_reason),
+		 "step 4: CM3_FW_INIT_RESULT timeout");
+	self_test_passed = false;
 	return -ETIMEDOUT;
 
 fw_init_ok:
@@ -456,6 +470,9 @@ fw_init_ok:
 		msleep(1);
 	}
 	pr_err("fake_a750: FAIL step 7 — HFI_CTRL_STATUS timeout\n");
+	snprintf(self_test_fail_reason, sizeof(self_test_fail_reason),
+		 "step 7: HFI_CTRL_STATUS timeout");
+	self_test_passed = false;
 	return -ETIMEDOUT;
 
 hfi_ready:
@@ -465,6 +482,10 @@ hfi_ready:
 		if (rc) {
 			pr_err("fake_a750: FAIL step 9 — msg id=%u timed out (acked %d/%d)\n",
 				boot_msg_ids[i], acked, TOTAL);
+			snprintf(self_test_fail_reason, sizeof(self_test_fail_reason),
+				 "step 9: msg id=%u timed out (%d/%d ACKed)",
+				 boot_msg_ids[i], acked, TOTAL);
+			self_test_passed = false;
 			return rc;
 		}
 		acked++;
@@ -472,6 +493,8 @@ hfi_ready:
 
 	pr_info("fake_a750: boot self-test PASS (%d/%d messages ACKed)\n",
 		acked, TOTAL);
+	self_test_passed = true;
+	self_test_fail_reason[0] = '\0';
 	return 0;
 }
 
@@ -518,6 +541,60 @@ static const struct file_operations mmio_log_fops = {
 };
 
 /* -------------------------------------------------------------------------
+ * Layer 6 — sysfs kobject  (/sys/kernel/fake_a750/)
+ * ---------------------------------------------------------------------- */
+static struct kobject *fake_a750_kobj;
+
+static const char * const gmu_state_names[] = {
+	[GMU_IDLE]        = "IDLE",
+	[GMU_BOOTING]     = "BOOTING",
+	[GMU_FW_INIT_DONE] = "FW_INIT_DONE",
+	[GMU_HFI_WAITING] = "HFI_WAITING",
+	[GMU_HFI_READY]   = "HFI_READY",
+};
+
+static ssize_t chip_id_show(struct kobject *kobj, struct kobj_attribute *attr,
+			    char *buf)
+{
+	return sysfs_emit(buf, "0x%08x\n", ADRENO_CHIP_ID_A750);
+}
+
+static ssize_t gpu_state_show(struct kobject *kobj, struct kobj_attribute *attr,
+			      char *buf)
+{
+	int state = atomic_read(&gmu_state);
+
+	if (state < 0 || state >= (int)ARRAY_SIZE(gmu_state_names))
+		return sysfs_emit(buf, "UNKNOWN\n");
+	return sysfs_emit(buf, "%s\n", gmu_state_names[state]);
+}
+
+static ssize_t self_test_result_show(struct kobject *kobj,
+				     struct kobj_attribute *attr, char *buf)
+{
+	if (!selftest)
+		return sysfs_emit(buf, "SKIP\n");
+	if (self_test_passed)
+		return sysfs_emit(buf, "PASS\n");
+	return sysfs_emit(buf, "FAIL: %s\n", self_test_fail_reason);
+}
+
+static struct kobj_attribute chip_id_attr        = __ATTR_RO(chip_id);
+static struct kobj_attribute gpu_state_attr      = __ATTR_RO(gpu_state);
+static struct kobj_attribute self_test_result_attr = __ATTR_RO(self_test_result);
+
+static struct attribute *fake_a750_attrs[] = {
+	&chip_id_attr.attr,
+	&gpu_state_attr.attr,
+	&self_test_result_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group fake_a750_attr_group = {
+	.attrs = fake_a750_attrs,
+};
+
+/* -------------------------------------------------------------------------
  * Module init / exit
  * ---------------------------------------------------------------------- */
 static int __init fake_a750_init(void)
@@ -556,7 +633,7 @@ static int __init fake_a750_init(void)
 		goto err_hfi_task;
 	}
 
-	/* Optionally run self-test */
+	/* Optionally run self-test synchronously, then expose result via sysfs */
 	if (selftest) {
 		selftest_task = kthread_run(selftest_thread, NULL,
 					    "fake_a750_test");
@@ -565,12 +642,37 @@ static int __init fake_a750_init(void)
 			selftest_task = NULL;
 			goto err_test_task;
 		}
+		/*
+		 * Wait for the self-test thread to finish before we create the
+		 * sysfs kobject so that self_test_passed / self_test_fail_reason
+		 * are fully written before any reader can observe them.
+		 * kthread_stop() blocks until the thread returns; the thread
+		 * does not spin on kthread_should_stop(), so this is safe.
+		 */
+		kthread_stop(selftest_task);
+		selftest_task = NULL;
 	}
+
+	/* Create /sys/kernel/fake_a750/ with chip_id, gpu_state,
+	 * and self_test_result attributes.
+	 */
+	fake_a750_kobj = kobject_create_and_add("fake_a750", kernel_kobj);
+	if (!fake_a750_kobj) {
+		ret = -ENOMEM;
+		goto err_kobj;
+	}
+	ret = sysfs_create_group(fake_a750_kobj, &fake_a750_attr_group);
+	if (ret)
+		goto err_sysfs;
 
 	pr_info("fake_a750: A750 GMU/HFI simulation loaded (selftest=%d)\n",
 		selftest);
 	return 0;
 
+err_sysfs:
+	kobject_put(fake_a750_kobj);
+	fake_a750_kobj = NULL;
+err_kobj:
 err_test_task:
 	kthread_stop(hfi_surr_task);
 	hfi_surr_task = NULL;
@@ -590,10 +692,13 @@ err_gmu:
 
 static void __exit fake_a750_exit(void)
 {
-	if (selftest_task) {
-		kthread_stop(selftest_task);
-		selftest_task = NULL;
+	if (fake_a750_kobj) {
+		sysfs_remove_group(fake_a750_kobj, &fake_a750_attr_group);
+		kobject_put(fake_a750_kobj);
+		fake_a750_kobj = NULL;
 	}
+
+	/* selftest_task is always NULL here: init waits for it synchronously */
 	if (hfi_surr_task) {
 		/* Unblock hfi thread before stopping */
 		wake_up(&hfi_event_wq);

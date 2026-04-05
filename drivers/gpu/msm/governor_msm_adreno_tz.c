@@ -20,9 +20,6 @@
 #else
 #include <linux/qcom_scm.h>
 #endif
-#if IS_ENABLED(CONFIG_QCOM_SCM_ADDON)
-#include <linux/firmware/qcom/qcom_scm_addon.h>
-#endif
 
 #if (KERNEL_VERSION(6, 19, 0) <= LINUX_VERSION_CODE)
 #include <linux/devfreq-governor.h>

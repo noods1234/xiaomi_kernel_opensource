@@ -89,6 +89,30 @@
 #include <linux/mutex.h>
 #include <linux/sysfs.h>
 
+/**
+ * struct cinema_end_hw_ops - hardware backend operations for eND control
+ *
+ * All function pointers may be NULL — the driver operates as a pure
+ * userspace-facing stub (register tracking only) when no backend is set.
+ * A real backend (SPI MCU, I2C actuator) sets these via cinema_end_set_ops().
+ */
+struct cinema_end_hw_ops {
+	/** @enable: power on/off the eND cell hardware */
+	int (*enable)(bool on);
+	/** @set_nd: command a new ND setpoint in millibels */
+	int (*set_nd)(int millibels);
+	/** @get_nd: read back the achieved ND from hardware */
+	int (*get_nd)(int *millibels);
+	/** @get_temp: read cell temperature in millidegrees C */
+	int (*get_temp)(int *millidegrees);
+};
+
+static const struct cinema_end_hw_ops *end_hw_ops;  /* NULL = stub mode */
+
+/* Forward declaration — allows platform drivers in other translation
+ * units to register a backend without a separate header (YAGNI). */
+void cinema_end_set_ops(const struct cinema_end_hw_ops *ops);
+
 /* ------------------------------------------------------------------ */
 /* Constants                                                            */
 /* ------------------------------------------------------------------ */
@@ -117,6 +141,26 @@ static int  end_cell_temp;	/* last MCU-reported cell temp, m°C */
 
 static struct kobject *end_kobj;
 static DEFINE_MUTEX(end_lock);
+
+/* ------------------------------------------------------------------ */
+/* Hardware backend registration                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * cinema_end_set_ops - register (or unregister) a hardware backend
+ * @ops: pointer to ops table, or NULL to revert to stub mode
+ *
+ * Called by a platform driver (e.g. SPI MCU bridge) once its hardware
+ * is ready.  Pass NULL to detach.  Safe to call at any time after
+ * module_init completes.
+ */
+void cinema_end_set_ops(const struct cinema_end_hw_ops *ops)
+{
+	mutex_lock(&end_lock);
+	end_hw_ops = ops;
+	mutex_unlock(&end_lock);
+}
+EXPORT_SYMBOL_GPL(cinema_end_set_ops);
 
 /* ------------------------------------------------------------------ */
 /* enable                                                               */
@@ -156,6 +200,13 @@ static ssize_t enable_store(struct kobject *kobj,
 	end_active = val;
 	if (!val)
 		end_fault = false;	/* clear fault on explicit disable */
+
+	if (end_hw_ops && end_hw_ops->enable) {
+		int hw_ret = end_hw_ops->enable(val);
+
+		if (hw_ret)
+			pr_warn("cinema_end: hw enable(%d) failed: %d\n", val, hw_ret);
+	}
 
 	/*
 	 * TODO (Rev A-1): propagate to cinema_mode performance coordinator.
@@ -206,6 +257,12 @@ static ssize_t nd_setpoint_store(struct kobject *kobj,
 
 	mutex_lock(&end_lock);
 	end_nd_setpoint = val;
+	if (end_hw_ops && end_hw_ops->set_nd) {
+		int hw_ret = end_hw_ops->set_nd(val);
+
+		if (hw_ret)
+			pr_warn("cinema_end: hw set_nd(%d) failed: %d\n", val, hw_ret);
+	}
 	mutex_unlock(&end_lock);
 
 	/* Wake any daemon poll()ing on this node for setpoint changes. */
@@ -419,6 +476,7 @@ static int __init cinema_end_init(void)
 	pr_info("cinema_end: eND interface ready\n");
 	pr_info("cinema_end:   /sys/kernel/cinema_end/{enable,nd_setpoint,mode,nd_actual,cell_temp,status}\n");
 	pr_info("cinema_end:   Rev A working band: 2000–4000 mb (2–4 stops)\n");
+	pr_info("cinema_end: hardware backend: %s\n", end_hw_ops ? "registered" : "stub (no hardware)");
 	return 0;
 }
 
