@@ -69,4 +69,3 @@ obj-$(CONFIG_CINEMA_END)		+= cinema_end.o
 obj-$(CONFIG_CINEMA_MODE)		+= cinema_mode.o
 obj-$(CONFIG_CINEMA_MODE_KUNIT_TEST)	+= cinema_mode_kunit.o
 obj-$(CONFIG_FAKE_SM8650_CPUFREQ)	+= fake_sm8650_cpufreq.o
-obj-$(CONFIG_FAKE_A750_HW)		+= fake_a750_hw.o
