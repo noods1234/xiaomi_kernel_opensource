@@ -1,0 +1,124 @@
+# cinema_mode.te
+# SELinux policy for the cinema_mode sysfs node (/sys/kernel/cinema_mode/enable)
+# and for init.cinema.rc property triggers.
+
+# ---- Type declarations ----
+type cinema_mode_sysfs, fs_type, sysfs_type;
+type cinema_mode_sysfs_dir, fs_type, sysfs_type;
+
+# Dedicated exec type for the cinema_io_tune script (scoped, not shell_exec)
+type cinema_io_tune_exec, exec_type, vendor_file_type, file_type;
+
+# Domain for the cinema_io_tune service (seclabel u:r:cinema_io_tune:s0 in init.cinema.rc).
+# Must be declared as a domain so init can transition into it via the seclabel directive.
+type cinema_io_tune, domain;
+
+# ---- Label the sysfs nodes (see genfs_contexts) ----
+# Directory:  /sys/kernel/cinema_mode      -> cinema_mode_sysfs_dir
+# Control file: /sys/kernel/cinema_mode/enable -> cinema_mode_sysfs
+
+# ---- Allow cinema_io_tune domain to execute the shell and its script ----
+# The seclabel directive in init.cinema.rc forces the service into the
+# cinema_io_tune domain regardless of the exec binary.  init execve()s
+# /vendor/bin/sh, so shell_exec is the entrypoint.
+# entrypoint is intentionally omitted here — with seclabel, the domain
+# transition is forced by init, not via a type_transition rule, so the
+# entrypoint permission is not evaluated.  shell_exec only needs read+execute.
+allow cinema_io_tune shell_exec:file { read execute open getattr };
+allow cinema_io_tune cinema_io_tune_exec:file { read execute open getattr };
+
+# Basic self/process permissions every domain needs.
+allow cinema_io_tune cinema_io_tune:process { fork sigchld };
+
+# Read access to /vendor/bin and /vendor/bin/sh directory entries.
+allow cinema_io_tune vendor_file_type:dir { open read search getattr };
+allow cinema_io_tune vendor_file_type:file { read open getattr };
+
+# Write to UFS block queue sysfs nodes (scheduler, read_ahead_kb, nr_requests, etc.)
+# sysfs_block is the standard AOSP type for /sys/block/*/queue/* nodes.
+# We grant write only to this scoped type — not the blanket sysfs_type —
+# so cinema_io_tune cannot reach /sys/power/state, /sys/kernel/debug/*,
+# or other sensitive sysfs nodes.
+allow cinema_io_tune sysfs_block:dir { open read search getattr };
+allow cinema_io_tune sysfs_block:file { read write open getattr };
+
+# /sys/block/zram0/disksize lives under the same sysfs_block label on
+# Android (block device sysfs nodes share the type).  No additional grant needed.
+
+# Write to the cinema_mode sysfs control file specifically.
+allow cinema_io_tune cinema_mode_sysfs_dir:dir { open read search getattr };
+allow cinema_io_tune cinema_mode_sysfs:file { read write open getattr };
+
+# Write to /proc/sys/vm/* via the sysctl_vm type (standard AOSP base policy).
+# This covers swappiness, dirty_ratio, dirty_expire_centisecs, etc.
+# sysctl_vm is scoped to /proc/sys/vm/ and does NOT cover /proc/sysrq-trigger,
+# /proc/*/mem, or other dangerous proc files.
+allow cinema_io_tune sysctl_vm:dir { open read search getattr };
+allow cinema_io_tune sysctl_vm:file { read write open getattr };
+
+# Write to /proc/sys/fs/inotify/* via the sysctl_fs type (standard AOSP base policy).
+# Covers max_user_watches, max_user_instances.
+allow cinema_io_tune sysctl_fs:dir { open read search getattr };
+allow cinema_io_tune sysctl_fs:file { read write open getattr };
+
+# Read /proc/swaps to check whether zram0 is already an active swap device.
+# proc_swaps is the standard label for /proc/swaps in AOSP base policy.
+allow cinema_io_tune proc_swaps:file { read open getattr };
+
+# swapon(8) requires CAP_SYS_ADMIN.  Without sys_admin the swapon() syscall
+# returns EPERM regardless of filesystem permissions.
+allow cinema_io_tune self:capability sys_admin;
+
+# dac_override: cinema_io_tune runs as uid=0 (user root in the service stanza)
+# but some sysfs nodes (notably BFQ queue files on UFS LUNs) have uid=0,
+# gid=disk.  The SELinux process check for write happens after the DAC check;
+# dac_override covers the open() call on nodes not owned by the process's gid.
+allow cinema_io_tune self:capability dac_override;
+
+# Execute system utilities called from cinema_io_tune.sh:
+#   - /system/bin/grep  (checks /proc/swaps for zram0)
+#   - /system/bin/swapon (activates ZRAM swap)
+# Both binaries carry the system_file label.  execute_no_trans keeps the
+# child process in the cinema_io_tune domain rather than transitioning to a
+# new one (which would require an additional domain declaration).
+allow cinema_io_tune system_file:file { read open getattr execute execute_no_trans };
+
+# /dev/zram0 is a block device node.  swapon(2) and swapoff(2) open it for
+# read+write and issue block ioctls (BLKGETSIZE64, BLKSSSZGET).
+# In AOSP base policy, swap block devices carry the swap_block_device type
+# (not the generic block_device type).  Using the generic block_device type
+# would be overly broad — swap_block_device is the correct scoped label.
+# swapoff is also in /system/bin/ and is covered by the system_file execute
+# grant above.
+allow cinema_io_tune swap_block_device:blk_file { open read write ioctl getattr };
+
+# cinema_on_apply.sh and cinema_off_apply.sh write diagnostic messages to
+# /dev/kmsg on swapoff failure.  kmsg_device is the standard AOSP type.
+allow cinema_io_tune kmsg_device:chr_file { open write getattr };
+
+# ---- Allow init to access the sysfs directory and write the control file ----
+allow init cinema_mode_sysfs_dir:dir { open read search getattr };
+allow init cinema_mode_sysfs:file { read write getattr open };
+
+# ---- Allow system_server and cameraserver to activate cinema mode ----
+# They set persist.cinema.mode which triggers the init rc rule.
+# No direct sysfs access needed from userspace — all writes go via init.
+allow system_server cinema_prop:property_service set;
+allow cameraserver cinema_prop:property_service set;
+
+# ---- Allow init to execute the cinema_io_tune script (scoped to its type) ----
+allow init cinema_io_tune_exec:file { read execute execute_no_trans open getattr };
+
+# ---- Property types ----
+# persist.cinema.* — survives reboot, writable by init, system_server, and cameraserver
+type cinema_prop, property_type;
+
+# sys.cinema.* — runtime state, set only by init
+type sys_cinema_prop, property_type;
+
+# ---- neverallow guards ----
+# Prevent any domain other than init and system_server from persisting cinema state
+neverallow { domain -init -system_server -cameraserver } cinema_prop:property_service set;
+
+# Only init may set runtime cinema state
+neverallow { domain -init } sys_cinema_prop:property_service set;

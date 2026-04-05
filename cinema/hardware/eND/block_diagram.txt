@@ -1,0 +1,192 @@
+eND Rev A — System Block Diagram
+Cinema phone conversion, Sony LYT-900 / Xiaomi 14 Ultra
+================================================================
+
+OPTICAL PATH (cross-section, lens-to-sensor axis)
+──────────────────────────────────────────────────
+
+    LENS MODULE (existing)
+    ┌────────────────────────────────┐
+    │  Leica optics + variable iris  │
+    │  f/1.9 – f/4.0 aperture ring  │
+    └────────────┬───────────────────┘
+                 │ light path
+                 ▼
+    ╔════════════════════════════════╗
+    ║   eND CARTRIDGE  (Rev A)       ║ ← removable, no sensor bond
+    ║                                ║
+    ║  ┌──────────────────────────┐  ║
+    ║  │  AR window  (front)      │  ║  0.30 mm  N-BK7, AR < 0.3%/face
+    ║  ├──────────────────────────┤  ║
+    ║  │  optical cement / gap    │  ║  0.10 mm
+    ║  ├──────────────────────────┤  ║
+    ║  │  LC cell A (guest-host)  │  ║  ~0.45 mm  ─┐ dual-cell
+    ║  │  LC cell B (guest-host)  │  ║  ~0.45 mm  ─┘ PolarView eND(NBf2.0)
+    ║  ├──────────────────────────┤  ║
+    ║  │  optical cement / gap    │  ║  0.10 mm
+    ║  ├──────────────────────────┤  ║
+    ║  │  AR window  (rear)       │  ║  0.30 mm
+    ║  └──────────────────────────┘  ║
+    ║                                ║
+    ║  ← blackened frame, light trap ║
+    ╚════════════════╤═══════════════╝
+                     │ flex harness (6-pin, 1.25 mm pitch)
+                     │ light path continues ↓
+    ┌────────────────▼───────────────┐
+    │  LYT-900 cover glass (existing) │  0.30 mm
+    │  LYT-900 1-inch sensor          │
+    └────────────────────────────────┘
+
+
+ELECTRONIC CONTROL PATH
+──────────────────────────────────────────────────────────────────────────
+
+REV A-0 (bench mule)
+─────────────────────
+
+  Android phone ──USB/ADB──► Android Cinema App
+                                │
+                                │ USB-CDC serial
+                                ▼
+                         STM32U5 dev board
+                         ┌────────────────┐
+                         │  LUT engine    │
+                         │  temp poll     │
+                         │  slew control  │
+                         └───────┬────────┘
+                                 │ USB
+                                 ▼
+                         LC-Tec LCC-230
+                         ┌────────────────┐
+                         │  CH1: cell A   │── 0–15 VRMS AC ──► LC cell A
+                         │  CH2: cell B   │── 0–15 VRMS AC ──► LC cell B
+                         └────────────────┘
+
+                         TMP117 (breakout) ── I²C ──► STM32U5 dev board
+                         (clamped to cartridge frame)
+
+
+REV A-1 (integrated prototype)
+────────────────────────────────
+
+  Android phone
+  ┌──────────────────────────────────────────────────────────┐
+  │                                                          │
+  │  Camera2 API ──► metered EV                             │
+  │  Cinema App  ──► ND setpoint, mode, manual ramp         │
+  │                                                          │
+  │  Kernel cinema_mode driver                              │
+  │  (/sys/kernel/cinema_mode/enable)                       │
+  │  CPU/GPU/IO performance layer (existing sw stack)       │
+  │                                                          │
+  └──────────────────────┬───────────────────────────────────┘
+                         │ USB-C aux or UART (mod grip connector)
+                         ▼
+    ┌────────────────────────────────────────────────────────┐
+    │  eND CONTROL BOARD  (25 × 12 × 1.2 mm)                │
+    │                                                        │
+    │  ┌──────────────┐    I²C    ┌──────────┐              │
+    │  │  STM32U5     │◄─────────►│  TMP117  │◄── cartridge │
+    │  │  supervisor  │           │  cell T° │    frame      │
+    │  │  MCU         │                                      │
+    │  │              │    SPI    ┌──────────┐               │
+    │  │              │──────────►│ AD5696R  │               │
+    │  │  LUT engine  │           │ 16-bit   │               │
+    │  │  slew ctrl   │           │ quad DAC │               │
+    │  │  mode FSM    │           └────┬─────┘               │
+    │  │  cal tables  │                │ Vsetpoint_A, _B     │
+    │  └──────────────┘           ┌────▼──────────────────┐  │
+    │                             │  ANALOG OUTPUT STAGE  │  │
+    │  ┌─────────────┐            │                       │  │
+    │  │  TPS65131   │──+15V/─15V►│  OPA2197              │  │
+    │  │  split-rail │            │  ├─ level shift A      │  │
+    │  │  supply     │            │  └─ level shift B      │  │
+    │  └─────────────┘            │                       │  │
+    │                             │  ADG1419               │  │
+    │                             │  polarity/switch routing│  │
+    │                             └───────────┬────────────┘  │
+    └─────────────────────────────────────────┼───────────────┘
+                                              │ flex harness
+                                              │ (6-pin)
+                                    ┌─────────▼──────────┐
+                                    │  eND CARTRIDGE     │
+                                    │  LC cell A ◄─ CH_A │ AC drive,
+                                    │  LC cell B ◄─ CH_B │ waveform
+                                    │  TMP117 ──► I²C    │ characterized
+                                    └────────────────────┘ on bench
+
+
+SOFTWARE / HARDWARE INTERACTION MAP
+──────────────────────────────────────────────────────────────────────────
+
+  ANDROID USERSPACE
+  ┌──────────────────────────────────────────────────────────┐
+  │  Cinema App                                              │
+  │  ├─ ND setpoint UI (manual / exposure-hold / DOF-hold)  │
+  │  ├─ Camera2 AE integration (metered EV → ND delta cmd)  │
+  │  ├─ MCU telemetry display (T°, Vrms, current ND)        │
+  │  └─ writes persist.cinema.nd_enable → triggers init.rc  │
+  └───────────────────────┬──────────────────────────────────┘
+                          │ Binder / property service
+  ┌───────────────────────▼──────────────────────────────────┐
+  │  ANDROID INIT (init.cinema.rc)                           │
+  │  on property:persist.cinema.nd_enable=1                  │
+  │  ├─ write /sys/kernel/cinema_mode/enable 1               │
+  │  ├─ start cinema_on_apply (ZRAM 4→2 GB)                  │
+  │  ├─ wbt_lat_usec, force_no_nap, cpuset, uclamp tuning    │
+  │  └─ write thermal_message/cinema_mode 1                  │
+  └───────────────────────┬──────────────────────────────────┘
+                          │
+  ┌───────────────────────▼──────────────────────────────────┐
+  │  KERNEL (cinema_mode.c driver)                           │
+  │  ├─ freq_qos floor (all clusters pinned to max)          │
+  │  ├─ cpu_latency_qos 100 µs (blocks deep C-states)        │
+  │  ├─ wakeup_source (prevents suspend during shoot)        │
+  │  └─ cpufreq notifier (hotplug resilience)                │
+  └──────────────────────────────────────────────────────────┘
+
+  eND HARDWARE PATH  (parallel, independent from SW perf stack)
+  ┌──────────────────────────────────────────────────────────┐
+  │  Cinema App ──USB/UART──► eND MCU ──LC drive──► cell     │
+  │                                                          │
+  │  Data flow:                                              │
+  │  AE metered EV ──► ND delta ──► setpoint cmd ──► MCU    │
+  │  MCU ──► LUT[setpoint, T°] ──► Vrms ──► DAC ──► cell   │
+  │  Cell T° ──► TMP117 ──► MCU ──► telemetry ──► App       │
+  └──────────────────────────────────────────────────────────┘
+
+
+MODES STATE DIAGRAM (MCU firmware)
+──────────────────────────────────────────────────────────────────────────
+
+                         POWER_ON
+                             │
+                             ▼
+                      ┌─────────────┐
+                      │   STANDBY   │ ← ND at clear (max transmittance)
+                      │  Vdrive low │   drive maintained to prevent
+                      └──────┬──────┘   electrolysis
+                             │
+                   operator enables ND
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+        ┌──────────┐  ┌──────────────┐  ┌──────────┐
+        │  MANUAL  │  │  EXPOSURE    │  │   DOF    │
+        │    ND    │  │    HOLD      │  │   HOLD   │
+        └────┬─────┘  └──────┬───────┘  └────┬─────┘
+             │               │               │
+             └───────────────┼───────────────┘
+                             │
+                       all modes share:
+                       - slew limiter (≤ 0.25 stop/frame)
+                       - LUT interpolator (setpoint, T°)
+                       - telemetry logger
+                       - flicker guard (drive freq ≠ FPS harmonics)
+                             │
+                    operator disables
+                             │
+                             ▼
+                      ┌─────────────┐
+                      │   STANDBY   │
+                      └─────────────┘

@@ -74,4 +74,10 @@ struct socinfo {
 	__le32 boot_core;
 };
 
+/* DDR info — used by KGSL kgsl_util.c upstream path.
+ * SMEM_DDR_BUILD_ID is BSP-only; omitting it lets kgsl_get_ddrtype() → -ENOENT */
+struct ddrinfo {
+	u32 device_type;
+};
+
 #endif

@@ -67,3 +67,7 @@ obj-$(CONFIG_TMR_MANAGER)      += xilinx_tmr_manager.o
 obj-$(CONFIG_TMR_INJECT)	+= xilinx_tmr_inject.o
 obj-$(CONFIG_TPS6594_ESM)	+= tps6594-esm.o
 obj-$(CONFIG_TPS6594_PFSM)	+= tps6594-pfsm.o
+obj-$(CONFIG_CINEMA_END)		+= cinema_end.o
+obj-$(CONFIG_CINEMA_MODE)		+= cinema_mode.o
+obj-$(CONFIG_FAKE_SM8650_CPUFREQ)	+= fake_sm8650_cpufreq.o
+obj-$(CONFIG_FAKE_A750_HW)		+= fake_a750_hw.o

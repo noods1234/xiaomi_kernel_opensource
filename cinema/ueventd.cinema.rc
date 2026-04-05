@@ -1,0 +1,17 @@
+# ueventd.cinema.rc
+# udev-style permission rules for cinema mode device nodes.
+# Merged into the device ueventd.rc via device_cinema.mk PRODUCT_COPY_FILES.
+
+# cinema_mode kernel sysfs — root rw only; access is gated by CAP_SYS_ADMIN
+# in the driver and by SELinux cinema_mode_sysfs policy.  Group/world write
+# permission would be misleading because the CAP_SYS_ADMIN check in the
+# driver rejects non-root writers regardless of file mode.
+/sys/kernel/cinema_mode/enable          0600    root    root
+
+# Thermal message cinema node
+/sys/class/thermal/thermal_message/cinema_mode  0664    system  system
+
+# GPU performance nodes used by cinema_on_apply.sh / init.cinema.rc
+/sys/class/kgsl/kgsl-3d0/min_pwrlevel  0664    system  system
+/sys/class/kgsl/kgsl-3d0/force_no_nap  0664    system  system
+/sys/class/kgsl/kgsl-3d0/idle_timer    0664    system  system

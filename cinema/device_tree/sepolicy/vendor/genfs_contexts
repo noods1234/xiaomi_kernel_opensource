@@ -1,0 +1,6 @@
+# genfs_contexts — cinema_mode sysfs labels
+# Merged into the vendor sepolicy at build time.
+# Directory and control file use distinct types so directory search/getattr
+# can be granted independently from write access to the control file.
+genfscon sysfs /kernel/cinema_mode          u:object_r:cinema_mode_sysfs_dir:s0
+genfscon sysfs /kernel/cinema_mode/enable   u:object_r:cinema_mode_sysfs:s0

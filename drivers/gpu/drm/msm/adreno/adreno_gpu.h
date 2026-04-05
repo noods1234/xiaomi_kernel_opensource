@@ -48,6 +48,7 @@ enum adreno_family {
 	ADRENO_6XX_GEN4,  /* a660 family */
 	ADRENO_7XX_GEN1,  /* a730 family */
 	ADRENO_7XX_GEN2,  /* a740 family */
+	ADRENO_7XX_GEN3,  /* a750 family (SM8650 / Pineapple) */
 };
 
 #define ADRENO_QUIRK_TWO_PASS_USE_WFI		BIT(0)
@@ -422,11 +423,24 @@ static inline int adreno_is_a740_family(struct adreno_gpu *gpu)
 	return gpu->info->family == ADRENO_7XX_GEN2;
 }
 
+static inline int adreno_is_a750(struct adreno_gpu *gpu)
+{
+	return gpu->info->chip_ids[0] == 0x43090a01;
+}
+
+static inline int adreno_is_a750_family(struct adreno_gpu *gpu)
+{
+	if (WARN_ON_ONCE(!gpu->info))
+		return false;
+	return gpu->info->family == ADRENO_7XX_GEN3;
+}
+
 static inline int adreno_is_a7xx(struct adreno_gpu *gpu)
 {
 	/* Update with non-fake (i.e. non-A702) Gen 7 GPUs */
 	return gpu->info->family == ADRENO_7XX_GEN1 ||
-	       adreno_is_a740_family(gpu);
+	       adreno_is_a740_family(gpu) ||
+	       adreno_is_a750_family(gpu);
 }
 
 u64 adreno_private_address_space_size(struct msm_gpu *gpu);

@@ -522,9 +522,37 @@ static const struct adreno_info gpulist[] = {
 		.zapfw = "a740_zap.mdt",
 		.hwcg = a740_hwcg,
 		.address_space_size = SZ_16G,
+	}, {
+		/*
+		 * A750 / gen7_9_0 — Adreno 750 on SM8650 (Snapdragon 8 Gen 3)
+		 * GMEM: 3 MiB.  GMU firmware: gmu_gen70900.bin.
+		 * AQE firmware (new in gen7_9_0): gen70900_aqe.fw.
+		 *
+		 * WARNING: init = a6xx_gpu_init is a placeholder.  The A750
+		 * requires the gen7_9_0 hwsched path from the KGSL driver tree
+		 * (drivers/gpu/msm/).  Do NOT enable CONFIG_DRM_MSM on real
+		 * SM8650 hardware — use CONFIG_QCOM_KGSL instead.
+		 */
+		.chip_ids = ADRENO_CHIP_IDS(0x43090a01),
+		.family = ADRENO_7XX_GEN3,
+		.fw = {
+			[ADRENO_FW_SQE] = "gen70900_sqe.fw",
+			[ADRENO_FW_GMU] = "gmu_gen70900.bin",
+		},
+		.gmem = 3 * SZ_1M,
+		.inactive_period = DRM_MSM_INACTIVE_PERIOD,
+		.quirks = ADRENO_QUIRK_HAS_CACHED_COHERENT |
+			  ADRENO_QUIRK_HAS_HW_APRIV,
+		.init = a6xx_gpu_init,
+		.zapfw = "gen70900_zap.mbn",
+		.address_space_size = SZ_16G,
 	},
 };
 
+MODULE_FIRMWARE("qcom/gen70900_sqe.fw");
+MODULE_FIRMWARE("qcom/gmu_gen70900.bin");
+MODULE_FIRMWARE("qcom/gen70900_aqe.fw");
+MODULE_FIRMWARE("qcom/gen70900_zap.mbn");
 MODULE_FIRMWARE("qcom/a300_pm4.fw");
 MODULE_FIRMWARE("qcom/a300_pfp.fw");
 MODULE_FIRMWARE("qcom/a330_pm4.fw");

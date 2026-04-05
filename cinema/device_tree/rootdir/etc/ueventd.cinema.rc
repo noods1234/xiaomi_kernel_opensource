@@ -1,0 +1,18 @@
+# ueventd.cinema.rc
+# Ownership and permissions for cinema_mode sysfs node.
+#
+# Drop into device/xiaomi/aurora/ and add to BoardConfig.mk:
+#   TARGET_UEVENTD_RC_FILES += device/xiaomi/aurora/ueventd.cinema.rc
+#
+# ueventd processes UEVENT_ADD notifications from the kernel and applies
+# these rules every time the sysfs node appears — including after
+# cinema_mode.ko is unloaded and reloaded (e.g. during testing or
+# firmware update).
+#
+# init.rc "on boot" chown fires only once per boot and is lost after
+# rmmod/insmod.  ueventd is the correct Android mechanism for dynamic
+# sysfs node ownership.
+#
+# Format: <path>  <permissions>  <owner>  <group>
+
+/sys/kernel/cinema_mode/enable  0644  system  system
