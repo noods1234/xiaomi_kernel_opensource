@@ -115,12 +115,24 @@ static inline s32 cinema_test_read_min(struct freq_constraints *qos)
  *
  * Mirrors the innermost operation of cinema_activate() and
  * cinema_deactivate().
+ *
+ * cinema_activate() installs a recording floor computed as:
+ *   floor_hz = max_freq * floor_pct / 100   (default floor_pct = 85)
+ * rather than max_freq itself, to preserve the upper OPP band for EAS.
+ * This test uses a representative floor_hz value (85% of the X4 prime
+ * max, rounded to a real OPP step) to mirror what the driver installs.
  */
 static void cinema_test_freq_qos_lifecycle(struct kunit *test)
 {
 	struct freq_constraints qos;
 	struct freq_qos_request req;
-	const s32 max_freq_khz = 3302400; /* SM8650 X4 prime core max */
+	/*
+	 * SM8650 X4 prime max = 3302400 kHz.
+	 * floor_hz = 3302400 * 85 / 100 = 2807040 kHz → rounds to nearest
+	 * OPP step 2803200 kHz in the actual EPSS table.  Use 2803200 here
+	 * to represent a realistic driver-installed floor value.
+	 */
+	const s32 floor_khz = 2803200;
 	int ret;
 
 	cinema_test_init_freq_constraints(&qos);
@@ -129,7 +141,7 @@ static void cinema_test_freq_qos_lifecycle(struct kunit *test)
 	/* Before add: request must be inactive */
 	KUNIT_EXPECT_FALSE(test, freq_qos_request_active(&req));
 
-	ret = freq_qos_add_request(&qos, &req, FREQ_QOS_MIN, max_freq_khz);
+	ret = freq_qos_add_request(&qos, &req, FREQ_QOS_MIN, floor_khz);
 	KUNIT_ASSERT_GE_MSG(test, ret, 0,
 			    "freq_qos_add_request unexpectedly failed");
 
@@ -137,7 +149,7 @@ static void cinema_test_freq_qos_lifecycle(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, freq_qos_request_active(&req));
 
 	/* Aggregated value must equal what we requested */
-	KUNIT_EXPECT_EQ(test, cinema_test_read_min(&qos), max_freq_khz);
+	KUNIT_EXPECT_EQ(test, cinema_test_read_min(&qos), floor_khz);
 
 	ret = freq_qos_remove_request(&req);
 	KUNIT_EXPECT_GE_MSG(test, ret, 0, "freq_qos_remove_request failed");
@@ -630,6 +642,52 @@ static void cinema_test_alloc_sizing(struct kunit *test)
 }
 
 /* ------------------------------------------------------------------ */
+/* Test 10b: floor_pct computation                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * cinema_test_floor_pct_computation - validate the integer arithmetic used
+ * to derive floor_hz from max_freq and floor_pct.
+ *
+ * cinema_activate() computes:
+ *   floor = (u64)policy->cpuinfo.max_freq * floor_pct / 100
+ * using 64-bit intermediate to avoid overflow for large max_freq values.
+ * This test verifies the arithmetic for the four SM8650 cluster maxima and
+ * the default floor_pct of 85.
+ */
+static void cinema_test_floor_pct_computation(struct kunit *test)
+{
+	static const struct {
+		unsigned int max_khz;
+		int pct;
+		unsigned int expected_khz;
+	} cases[] = {
+		/* A520 cluster: 2265600 kHz * 85% = 1925760 kHz */
+		{ 2265600, 85, 1925760 },
+		/* A720-lo cluster: 2956800 kHz * 85% = 2513280 kHz */
+		{ 2956800, 85, 2513280 },
+		/* A720-hi cluster: 3148800 kHz * 85% = 2676480 kHz */
+		{ 3148800, 85, 2676480 },
+		/* X4 prime cluster: 3302400 kHz * 85% = 2807040 kHz */
+		{ 3302400, 85, 2807040 },
+		/* Boundary: 100% must equal max_freq */
+		{ 3302400, 100, 3302400 },
+		/* Boundary: 50% minimum */
+		{ 3302400, 50, 1651200 },
+	};
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(cases); i++) {
+		unsigned int got = (unsigned int)(
+			(u64)cases[i].max_khz * cases[i].pct / 100);
+		KUNIT_EXPECT_EQ_MSG(test, got, cases[i].expected_khz,
+				    "floor_pct=%d max=%u kHz: got %u, want %u",
+				    cases[i].pct, cases[i].max_khz,
+				    got, cases[i].expected_khz);
+	}
+}
+
+/* ------------------------------------------------------------------ */
 /* Test suite registration                                               */
 /* ------------------------------------------------------------------ */
 
@@ -645,6 +703,7 @@ static struct kunit_case cinema_mode_test_cases[] = {
 	KUNIT_CASE(cinema_test_sysfs_input_parsing),
 	KUNIT_CASE(cinema_test_sm8650_topology_nr_cpus),
 	KUNIT_CASE(cinema_test_alloc_sizing),
+	KUNIT_CASE(cinema_test_floor_pct_computation),
 	{}
 };
 

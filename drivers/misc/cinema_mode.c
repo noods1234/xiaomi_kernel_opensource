@@ -4,21 +4,32 @@
  *
  * For Xiaomi 14 Ultra (aurora) / SM8650 (Pineapple).
  *
- * NOTE: device codename "aurora" is tentative — verify against the
- * shipping device-tree before tagging a production build.
- *
  * Exposes /sys/kernel/cinema_mode/enable.  Writing "1" activates cinema
  * mode, which:
  *
- *   • Pegs every CPUfreq policy to its maximum frequency via a PM-QoS
- *     FREQ_QOS_MIN request — bypasses governor scaling without changing
- *     the governor itself, so thermal governors still work.
- *   • Requests the system-wide CPU latency QoS to 0 µs — prevents the
- *     CPUs from entering deep C-states between frames.
+ *   • Raises every CPUfreq policy's minimum frequency to a recording floor
+ *     computed as (cpuinfo.max_freq * floor_pct / 100).  The floor keeps
+ *     all clusters fast enough for concurrent ISP/codec/display pipelines
+ *     while leaving EAS free to select any OPP at or above the floor.
+ *     Pinning to 100% of max_freq would destroy energy-aware scheduling;
+ *     the default floor_pct of 85 retains the upper OPP band for EAS.
+ *
+ *   • Requests the system-wide CPU latency QoS to 100 µs — prevents
+ *     cluster-power-collapse idle states (C2+, ~150 µs exit latency) that
+ *     can stall DMA completion from the ISP or Venus mid-frame, while
+ *     permitting clock-gated WFI (~5 µs) between frames.
+ *
  *   • Holds a wakeup source so the device cannot suspend mid-capture.
  *
  * Writing "0" releases all requests and returns the system to its normal
  * power behaviour.
+ *
+ * Module parameter
+ * ----------------
+ * floor_pct (int, default 85):  percentage of each policy's max_freq used
+ * as the FREQ_QOS_MIN recording floor.  Valid range 50–100.  Values below
+ * 50 are rejected at activation time; 100 pegs every cluster to its
+ * ceiling (equivalent to the original behaviour, but kills EAS).
  *
  * CPU hotplug handling
  * --------------------
@@ -29,6 +40,12 @@
  * cluster comes back online (CPUFREQ_CREATE_POLICY), so the frequency floor
  * is maintained across thermal-driven hotplug events.
  *
+ * Inter-module API
+ * ----------------
+ * cinema_mode_set_active(bool on) is exported for use by cinema_end.c.
+ * Both modules share the same cinema_lock; cinema_end must not call this
+ * from a context that already holds the lock.
+ *
  * Copyright (c) 2024, Xiaomi Cinema Kernel Project
  */
 
@@ -37,16 +54,44 @@
 #include <linux/cpufreq.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/notifier.h>
 #include <linux/pm_qos.h>
 #include <linux/pm_wakeup.h>
 #include <linux/slab.h>
 #include <linux/sysfs.h>
 
+/* ------------------------------------------------------------------ */
+/* Module parameters                                                    */
+/* ------------------------------------------------------------------ */
+
+static int floor_pct = 85;
+module_param(floor_pct, int, 0644);
+MODULE_PARM_DESC(floor_pct,
+	"Recording floor as %% of each policy's max_freq (50-100, default 85)");
+
+/* ------------------------------------------------------------------ */
+/* Per-CPU state                                                        */
+/* ------------------------------------------------------------------ */
+
 /* One QoS request slot per possible CPU */
 static struct freq_qos_request *freq_reqs;
+
+/*
+ * freq_floor_hz[cpu]: the floor value (kHz) installed for each governing
+ * CPU's policy.  Stored at activation time so the cpufreq notifier can
+ * re-apply the same floor after a hotplug re-create without recomputing
+ * from floor_pct.  This keeps the floor consistent even if floor_pct is
+ * changed via sysctl between the original activation and a re-pin event.
+ */
+static unsigned int *freq_floor_hz;
+
 /* Track which CPUs have an active request */
 static bool *freq_req_active;
+
+/* ------------------------------------------------------------------ */
+/* Module-level state                                                   */
+/* ------------------------------------------------------------------ */
 
 static struct pm_qos_request cinema_cpu_latency_qos;
 static struct wakeup_source  *cinema_ws;
@@ -67,8 +112,15 @@ static int cinema_activate(void)
 {
 	struct cpufreq_policy *policy;
 	unsigned int cpu;
+	unsigned int floor;
 	int ret;
 	int failures = 0;
+
+	if (floor_pct < 50 || floor_pct > 100) {
+		pr_err("cinema_mode: floor_pct=%d out of range [50,100]\n",
+		       floor_pct);
+		return -EINVAL;
+	}
 
 	for_each_possible_cpu(cpu) {
 		policy = cpufreq_cpu_get(cpu);
@@ -81,15 +133,25 @@ static int cinema_activate(void)
 			continue;
 		}
 
+		/*
+		 * Compute the recording floor for this policy.
+		 * floor_pct < 100 preserves the upper OPP band for EAS;
+		 * the governor may still select higher OPPs based on demand.
+		 * Do-it-in-kernel-integer: no fp, overflow-safe for u32 kHz.
+		 */
+		floor = (unsigned int)(
+			(u64)policy->cpuinfo.max_freq * floor_pct / 100);
+
 		ret = freq_qos_add_request(&policy->constraints,
 					   &freq_reqs[cpu],
 					   FREQ_QOS_MIN,
-					   policy->cpuinfo.max_freq);
+					   (s32)floor);
 		if (ret < 0) {
 			pr_warn("cinema_mode: freq_qos add failed cpu%u (%d)\n",
 				cpu, ret);
 			failures++;
 		} else {
+			freq_floor_hz[cpu]  = floor;
 			freq_req_active[cpu] = true;
 		}
 
@@ -103,29 +165,22 @@ static int cinema_activate(void)
 	}
 
 	/*
-	 * Block deep CPU idle states between frames.
-	 *
-	 * A value of 0 µs would block ALL idle states including WFI (C1,
-	 * ~5 µs exit latency), burning power on every inter-frame gap.
-	 * The relevant states to block on SM8650 are the cluster-power-collapse
-	 * states (C2+) whose exit latency is ~150 µs — long enough to miss a
-	 * DMA completion interrupt from the ISP or Venus mid-frame.
-	 *
-	 * 100 µs blocks those deep states while permitting clock-gated WFI,
-	 * matching the value used by production Snapdragon camera HALs.
+	 * Block cluster-power-collapse idle states (C2+, ~150 µs exit latency)
+	 * while permitting clock-gated WFI (~5 µs) between frames.
+	 * 100 µs matches the value used by production Snapdragon camera HALs.
 	 */
 	cpu_latency_qos_add_request(&cinema_cpu_latency_qos, 100);
 
-	/* Prevent runtime-suspend during recording.
-	 * __pm_stay_awake() activates the wakeup source under ws->lock.
-	 * wakeup_source_activate() is only called when !ws->active, so a
-	 * second call will not double-increment combined_event_count.  No
-	 * pre-check of ws->active is needed here, and reading it outside
-	 * ws->lock would be a data race.
+	/*
+	 * Prevent runtime-suspend during recording.
+	 * __pm_stay_awake() is safe to call unconditionally; it activates
+	 * the wakeup source under ws->lock and is idempotent when called
+	 * multiple times.
 	 */
 	__pm_stay_awake(cinema_ws);
 
-	pr_info("cinema_mode: active — CPUs pinned to max freq, suspend blocked\n");
+	pr_info("cinema_mode: active — CPUs floored at %d%% of max, suspend blocked\n",
+		floor_pct);
 	return 0;
 }
 
@@ -138,17 +193,16 @@ static void cinema_deactivate(void)
 			continue;
 		freq_qos_remove_request(&freq_reqs[cpu]);
 		freq_req_active[cpu] = false;
+		freq_floor_hz[cpu]   = 0;
 	}
 
 	if (cpu_latency_qos_request_active(&cinema_cpu_latency_qos))
 		cpu_latency_qos_remove_request(&cinema_cpu_latency_qos);
 
-	/* Release the wakeup source.  __pm_relax() checks ws->active under
-	 * ws->lock internally and is a no-op when the source is not active, so
-	 * it is safe to call unconditionally (e.g. from the partial-failure
-	 * unwind path in cinema_activate() before __pm_stay_awake() was ever
-	 * called).  Reading cinema_ws->active here without ws->lock would be a
-	 * data race, so the open-coded check is intentionally omitted.
+	/*
+	 * __pm_relax() checks ws->active internally and is a no-op when the
+	 * source is not active, so it is safe to call from the partial-failure
+	 * unwind path before __pm_stay_awake() was ever called.
 	 */
 	__pm_relax(cinema_ws);
 
@@ -165,37 +219,20 @@ static void cinema_deactivate(void)
  * CPUFREQ_REMOVE_POLICY fires inside cpufreq_policy_free(), before
  * kfree(policy), while policy->constraints are still valid.  We must
  * remove our request here; otherwise freq_reqs[cpu].qos is left
- * pointing at freed memory and any later freq_qos_remove_request()
- * call becomes a use-after-free.
+ * pointing at freed memory.
  *
  * CPUFREQ_CREATE_POLICY fires during cpufreq_online() after the policy
- * is fully initialised (cpuinfo.max_freq is set).  If cinema mode is
- * active we re-pin the new policy to its maximum frequency.
+ * is fully initialised.  If cinema mode is active we re-pin the new
+ * policy using the floor stored in freq_floor_hz[cpu].
  *
- * Locking: cinema_lock is a mutex; both notifier events are called from
- * a sleepable hotplug thread context so mutex_lock is safe.  There is
- * no lock-ordering hazard because neither cinema_activate() nor
- * cinema_deactivate() can trigger a policy create/remove event.
+ * Locking: both notifier events are called from a sleepable hotplug
+ * thread, so mutex_lock is safe.
  *
- * Governance-transfer invariant (SM8650-specific)
- * ------------------------------------------------
- * This driver indexes freq_reqs[] and freq_req_active[] by policy->cpu,
- * the governing (lowest-numbered) CPU of each policy at the time the
- * event fires.  If governance transfers to a different CPU within the
- * same policy (i.e. the original governing CPU goes offline while the
- * cluster stays up), policy->cpu changes but no CPUFREQ_REMOVE_POLICY /
- * CPUFREQ_CREATE_POLICY pair fires — the policy object persists with a
- * new .cpu field.  This would corrupt the index: the old slot in
- * freq_req_active[] stays true but points to the wrong request.
- *
- * On SM8650 (Pineapple) with the standard Qualcomm thermal hotplug policy,
- * CPUs within a cluster go offline and online as a unit, so the governing
- * CPU never changes without a full policy teardown.  The invariant holds.
- *
- * If this driver is ported to a platform where per-CPU hotplug is common
- * (e.g. server-class ARM with heterogeneous policies), the indexing scheme
- * must be changed from per-CPU to per-policy — keying on the lowest bit
- * of policy->cpus or on a policy-lifetime ID.
+ * Governance-transfer note (SM8650-specific):
+ * On SM8650 with the standard Qualcomm thermal hotplug policy, CPUs within
+ * a cluster go offline and online as a unit, so policy->cpu never changes
+ * without a full REMOVE/CREATE pair.  If ported to a platform with
+ * per-CPU hotplug, the indexing must change from per-CPU to per-policy.
  */
 static int cinema_cpufreq_notifier(struct notifier_block *nb,
 				   unsigned long event, void *data)
@@ -212,41 +249,43 @@ static int cinema_cpufreq_notifier(struct notifier_block *nb,
 
 	switch (event) {
 	case CPUFREQ_REMOVE_POLICY:
-		/*
-		 * The policy governing this CPU is being torn down.  Remove
-		 * our QoS request before the constraints memory is freed.
-		 */
 		if (freq_req_active[cpu]) {
 			freq_qos_remove_request(&freq_reqs[cpu]);
 			freq_req_active[cpu] = false;
+			freq_floor_hz[cpu]   = 0;
 			pr_debug("cinema_mode: removed QoS for cpu%u (policy offline)\n",
 				 cpu);
 		}
 		break;
 
 	case CPUFREQ_CREATE_POLICY:
-		/*
-		 * A policy has been created (cluster came back online).
-		 * Re-apply the frequency floor if cinema mode is active.
-		 */
 		if (!cinema_active)
 			break;
 
 		if (freq_req_active[cpu]) {
-			/* Should not happen, but guard against double-add */
 			pr_warn("cinema_mode: cpu%u policy created with active request — skipping\n",
 				cpu);
 			break;
 		}
 
+		/*
+		 * Use the floor stored at activation time.  If for some reason
+		 * freq_floor_hz[cpu] is zero (should not happen if the module
+		 * is correct), recompute from the new policy's max_freq.
+		 */
+		if (!freq_floor_hz[cpu]) {
+			freq_floor_hz[cpu] = (unsigned int)(
+				(u64)policy->cpuinfo.max_freq * floor_pct / 100);
+		}
+
 		ret = freq_qos_add_request(&policy->constraints,
 					   &freq_reqs[cpu],
 					   FREQ_QOS_MIN,
-					   policy->cpuinfo.max_freq);
+					   (s32)freq_floor_hz[cpu]);
 		if (ret >= 0) {
 			freq_req_active[cpu] = true;
-			pr_debug("cinema_mode: re-pinned cpu%u after hotplug\n",
-				 cpu);
+			pr_debug("cinema_mode: re-pinned cpu%u after hotplug (floor %u kHz)\n",
+				 cpu, freq_floor_hz[cpu]);
 		} else {
 			pr_warn("cinema_mode: re-pin failed for cpu%u after hotplug (%d)\n",
 				cpu, ret);
@@ -266,16 +305,52 @@ static struct notifier_block cinema_cpufreq_nb = {
 };
 
 /* ------------------------------------------------------------------ */
+/* Exported inter-module API                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * cinema_mode_set_active - activate or deactivate cinema performance mode.
+ * @on: true to activate, false to deactivate.
+ *
+ * May be called by cinema_end.c to couple eND enable with the performance
+ * coordinator.  Must not be called with cinema_lock held.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int cinema_mode_set_active(bool on)
+{
+	int ret = 0;
+
+	mutex_lock(&cinema_lock);
+
+	if (on == cinema_active)
+		goto out;
+
+	if (on) {
+		ret = cinema_activate();
+		if (ret)
+			goto out;
+	} else {
+		cinema_deactivate();
+	}
+
+	cinema_active = on;
+
+out:
+	mutex_unlock(&cinema_lock);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(cinema_mode_set_active);
+
+/* ------------------------------------------------------------------ */
+/* Sysfs interface                                                       */
+/* ------------------------------------------------------------------ */
 
 static ssize_t enable_show(struct kobject *kobj,
 			    struct kobj_attribute *attr, char *buf)
 {
 	bool active;
 
-	/* Take the same lock used by enable_store() so the read is not racing
-	 * with a concurrent write.  READ_ONCE alone does not provide the
-	 * necessary mutual exclusion here.
-	 */
 	mutex_lock(&cinema_lock);
 	active = cinema_active;
 	mutex_unlock(&cinema_lock);
@@ -288,11 +363,11 @@ static ssize_t enable_store(struct kobject *kobj,
 			     const char *buf, size_t count)
 {
 	bool on;
-	ssize_t ret = count;
+	int ret;
 
-	/* Pegging all CPUs to maximum frequency is a privileged operation that
-	 * can cause thermal stress and constitutes a system-wide resource
-	 * change.  Require CAP_SYS_ADMIN.
+	/*
+	 * Pegging all CPUs to a high frequency floor is a privileged operation
+	 * that can cause thermal stress.  Require CAP_SYS_ADMIN.
 	 */
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -300,25 +375,8 @@ static ssize_t enable_store(struct kobject *kobj,
 	if (kstrtobool(buf, &on))
 		return -EINVAL;
 
-	mutex_lock(&cinema_lock);
-
-	if (on == cinema_active)
-		goto out;
-
-	if (on) {
-		if (cinema_activate()) {
-			ret = -EIO;
-			goto out;
-		}
-	} else {
-		cinema_deactivate();
-	}
-
-	cinema_active = on;
-
-out:
-	mutex_unlock(&cinema_lock);
-	return ret;
+	ret = cinema_mode_set_active(on);
+	return ret ? ret : count;
 }
 
 static struct kobj_attribute enable_attr =
@@ -344,10 +402,16 @@ static int __init cinema_mode_init(void)
 	if (!freq_reqs)
 		return -ENOMEM;
 
+	freq_floor_hz = kcalloc(num_cpus, sizeof(*freq_floor_hz), GFP_KERNEL);
+	if (!freq_floor_hz) {
+		ret = -ENOMEM;
+		goto err_free_reqs;
+	}
+
 	freq_req_active = kcalloc(num_cpus, sizeof(*freq_req_active), GFP_KERNEL);
 	if (!freq_req_active) {
 		ret = -ENOMEM;
-		goto err_free_reqs;
+		goto err_free_floor;
 	}
 
 	cinema_ws = wakeup_source_register(NULL, "cinema_mode");
@@ -379,7 +443,8 @@ static int __init cinema_mode_init(void)
 		goto err_sysfs;
 	}
 
-	pr_info("cinema_mode: ready — echo 1 > /sys/kernel/cinema_mode/enable\n");
+	pr_info("cinema_mode: ready (floor_pct=%d%%) — echo 1 > /sys/kernel/cinema_mode/enable\n",
+		floor_pct);
 	return 0;
 
 err_sysfs:
@@ -390,6 +455,8 @@ err_ws:
 	wakeup_source_unregister(cinema_ws);
 err_free_active:
 	kfree(freq_req_active);
+err_free_floor:
+	kfree(freq_floor_hz);
 err_free_reqs:
 	kfree(freq_reqs);
 	return ret;
@@ -399,31 +466,17 @@ static void __exit cinema_mode_exit(void)
 {
 	/*
 	 * Step 1: drain userspace access.
-	 *
-	 * sysfs_remove_group() calls kernfs_drain() internally, which waits
-	 * for any in-flight show/store callbacks to complete and prevents new
-	 * ones from being dispatched.  After this returns, enable_store() can
-	 * never be called again, so cinema_active and freq_req_active[] can
-	 * only be modified by this exit path and by the cpufreq notifier.
+	 * sysfs_remove_group() waits for in-flight show/store to complete and
+	 * prevents new ones from being dispatched.
 	 */
 	sysfs_remove_group(cinema_kobj, &cinema_attr_group);
 	kobject_put(cinema_kobj);
 
 	/*
 	 * Step 2: release all QoS state under the lock.
-	 *
-	 * The cpufreq notifier is still registered here.  If a hotplug event
-	 * fires concurrently it will block on cinema_lock until we release it,
-	 * at which point freq_req_active[] is already all-false and the
-	 * notifier becomes a no-op.  This is correct serialisation.
-	 *
-	 * The previous ordering (unregister notifier first, then deactivate)
-	 * was wrong: it opened a window where a policy could be torn down
-	 * between the unregister and cinema_deactivate(), causing the kernel's
-	 * freq_qos_remove_all_requests() to clear req->qos while
-	 * freq_req_active[cpu] remained true.  cinema_deactivate() would then
-	 * call freq_qos_remove_request() on an already-removed request and
-	 * trigger WARN_ON(!freq_qos_request_active(req)).
+	 * The notifier is still registered here.  If a hotplug event fires
+	 * concurrently it blocks on cinema_lock; by the time it acquires the
+	 * lock freq_req_active[] is all-false and the handler is a no-op.
 	 */
 	mutex_lock(&cinema_lock);
 	if (cinema_active) {
@@ -434,24 +487,17 @@ static void __exit cinema_mode_exit(void)
 
 	/*
 	 * Step 3: unregister the cpufreq notifier.
-	 *
-	 * All QoS requests are gone and freq_req_active[] is all-false.  Any
-	 * notifier call that sneaks in between mutex_unlock and here will
-	 * find cinema_active == false and freq_req_active[cpu] == false and
-	 * return NOTIFY_DONE without touching any state.
-	 *
+	 * All QoS requests are gone and freq_req_active[] is all-false.
 	 * cpufreq_unregister_notifier() acquires the write side of the
-	 * blocking notifier chain's rwsem (cpufreq_policy_notifier_list is a
-	 * BLOCKING_NOTIFIER_HEAD — see drivers/cpufreq/cpufreq.c — not SRCU).
-	 * The write lock waits for any in-flight reader (notifier call in
-	 * progress holding the read lock) to complete, then removes our block.
-	 * After it returns, cinema_cpufreq_notifier() cannot execute.
+	 * blocking notifier chain's rwsem and waits for any in-flight call to
+	 * complete before removing our block.
 	 */
 	cpufreq_unregister_notifier(&cinema_cpufreq_nb,
 				    CPUFREQ_POLICY_NOTIFIER);
 
 	wakeup_source_unregister(cinema_ws);
 	kfree(freq_req_active);
+	kfree(freq_floor_hz);
 	kfree(freq_reqs);
 }
 

@@ -4,17 +4,13 @@
  *
  * For Xiaomi 14 Ultra (aurora) / SM8650 (Pineapple).
  *
- * NOTE: device codename "aurora" is tentative — verify against the
- * shipping device-tree before tagging a production build.
  * Hardware: LC-Tec PolarView eND(NBf2.0) dual-cell guest-host cartridge,
  * driven by an STM32U5 + AD5696R + TPS65131 sidecar board via USB/UART.
  *
  * This driver owns the kernel-side control and telemetry interface.
  * The actual LC drive waveform generation is performed by a privileged
  * userspace daemon (cinema_end_daemon) that bridges between this sysfs
- * interface and the MCU over USB-CDC or UART.  The split keeps platform
- * driver complexity low and lets the MCU firmware be updated in the field
- * without a kernel change.
+ * interface and the MCU over USB-CDC or UART.
  *
  * Kernel responsibilities:
  *   - sysfs interface for Android cinema app → MCU command path
@@ -33,7 +29,7 @@
  *
  *   enable       rw  0 = standby, 1 = active.  Requires CAP_SYS_ADMIN.
  *                    Writing 1 also activates the cinema_mode performance
- *                    coordinator (see TODO below).
+ *                    coordinator via cinema_mode_set_active(true).
  *
  *   nd_setpoint  rw  Target ND value in millibels (thousandths of one stop).
  *                    Range: 0 (clear) to END_ND_MAX_MB (7 stops = 7000 mb).
@@ -54,7 +50,7 @@
  *
  *   cell_temp    rw  LC cell temperature in millidegrees Celsius, from TMP117
  *                    on the cartridge flex tail.  Written by the daemon.
- *                    Used by the cinema app and available for logging.
+ *                    Triggers a fault if temperature exceeds END_TEMP_FAULT_MC.
  *                    Requires CAP_SYS_ADMIN to write.
  *
  *   status       ro  Human-readable state string: "standby", "active",
@@ -62,22 +58,10 @@
  *
  * Integration with cinema_mode
  * ----------------------------
- * TODO (Rev A-1): When eND is enabled, the performance coordinator
- * (cinema_mode.c) should also be activated to pin CPU frequencies, block
- * deep idle, and prevent suspend.  Two options:
- *
- *   Option A (simple, for Rev A prototype):
- *     cinema_end enable_store() writes 1 to /sys/kernel/cinema_mode/enable
- *     via kernel_write / sysfs_notify path — acceptable for a prototype but
- *     fragile because it depends on the sysfs path being stable.
- *
- *   Option B (production path):
- *     Export cinema_mode_set_active(bool) from cinema_mode.c and call it
- *     directly.  Requires adding EXPORT_SYMBOL_GPL in cinema_mode.c and
- *     a forward declaration here.  This is the correct long-term design.
- *
- * The stub below leaves both paths unimplemented and documents the
- * pr_info message that would be the call site.
+ * Enabling eND also enables the cinema_mode performance coordinator
+ * (CPU frequency floor, deep-idle block, suspend prevention) via the
+ * exported cinema_mode_set_active() API.  Disabling eND or entering fault
+ * state also releases the performance coordinator.
  *
  * Copyright (c) 2024, Xiaomi Cinema Kernel Project
  */
@@ -104,6 +88,21 @@
 #define END_MODE_DOF_HOLD	2  /* ND compensates when iris changes */
 #define END_MODE_MAX		END_MODE_DOF_HOLD
 
+/*
+ * Temperature fault threshold: 55 000 m°C (55°C).
+ * The LC cell and MCU sidecar board are rated to 85°C, but 55°C is the
+ * conservative operating limit for the LC-Tec cartridge under active drive.
+ * The TMP117 hardware alert fires first; this threshold is a software
+ * second-line-of-defence that lets the cinema app react without polling.
+ */
+#define END_TEMP_FAULT_MC	55000
+
+/* ------------------------------------------------------------------ */
+/* Inter-module API (from cinema_mode.c)                                */
+/* ------------------------------------------------------------------ */
+
+int cinema_mode_set_active(bool on);
+
 /* ------------------------------------------------------------------ */
 /* State                                                                */
 /* ------------------------------------------------------------------ */
@@ -117,6 +116,43 @@ static int  end_cell_temp;	/* last MCU-reported cell temp, m°C */
 
 static struct kobject *end_kobj;
 static DEFINE_MUTEX(end_lock);
+
+/* ------------------------------------------------------------------ */
+/* Internal helpers                                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * end_enter_fault - transition to fault state under end_lock.
+ *
+ * Sets end_fault, deactivates eND, and releases the cinema_mode
+ * performance coordinator.  Notifies sysfs waiters on "status".
+ * Must be called with end_lock held.
+ */
+static void end_enter_fault(const char *reason)
+{
+	if (end_fault)
+		return;	/* already faulted */
+
+	end_fault  = true;
+	end_active = false;
+
+	/*
+	 * Release the performance coordinator.  cinema_mode_set_active()
+	 * acquires cinema_lock internally; we must not hold it here.
+	 * end_lock and cinema_lock have a strict order:
+	 *   end_lock → cinema_lock (always; never the reverse).
+	 * This call is therefore safe.
+	 */
+	cinema_mode_set_active(false);
+
+	pr_warn("cinema_end: fault — %s\n", reason);
+
+	/*
+	 * Notify userspace.  sysfs_notify() can be called from any context
+	 * while holding end_lock (it uses its own internal spinlock).
+	 */
+	sysfs_notify(end_kobj, NULL, "status");
+}
 
 /* ------------------------------------------------------------------ */
 /* enable                                                               */
@@ -139,6 +175,7 @@ static ssize_t enable_store(struct kobject *kobj,
 			    const char *buf, size_t count)
 {
 	bool on;
+	int ret = 0;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -151,19 +188,36 @@ static ssize_t enable_store(struct kobject *kobj,
 	if (on == end_active)
 		goto out;
 
+	if (on && end_fault) {
+		/* Cannot re-enable while in fault state */
+		ret = -ENODEV;
+		goto out;
+	}
+
 	end_active = on;
 	if (!on)
 		end_fault = false;	/* clear fault on explicit disable */
 
 	/*
-	 * TODO (Rev A-1): propagate to cinema_mode performance coordinator.
+	 * Couple eND enable/disable to the cinema_mode performance
+	 * coordinator.  cinema_mode_set_active() acquires cinema_lock;
+	 * end_lock → cinema_lock order is always observed (see end_enter_fault).
 	 */
-	pr_debug("cinema_end: eND state %s (stub — no hardware backend)\n",
-		 on ? "active" : "standby");
+	ret = cinema_mode_set_active(on);
+	if (ret && on) {
+		/* Performance coordinator failed; roll back eND enable */
+		end_active = false;
+		goto out;
+	}
+
+	pr_debug("cinema_end: eND state %s\n", on ? "active" : "standby");
+
+	/* Notify userspace of state change */
+	sysfs_notify(end_kobj, NULL, "status");
 
 out:
 	mutex_unlock(&end_lock);
-	return count;
+	return ret ? ret : count;
 }
 
 /* ------------------------------------------------------------------ */
@@ -326,14 +380,22 @@ static ssize_t cell_temp_store(struct kobject *kobj,
 		return -ERANGE;
 
 	mutex_lock(&end_lock);
+
 	end_cell_temp = val;
 
 	/*
-	 * TODO (Rev A-1): raise a fault if temperature exceeds the MCU
-	 * alert threshold (55 000 m°C / 55°C).  The TMP117 hardware alert
-	 * fires first, but a kernel-level check provides a second safety
-	 * net and allows the cinema app to react without polling.
+	 * Temperature fault detection: if the cell exceeds the operating
+	 * limit (END_TEMP_FAULT_MC = 55°C), enter fault state.  The TMP117
+	 * hardware alert fires first; this is the kernel-side second net that
+	 * allows the cinema app to react via a status poll without a daemon
+	 * round-trip.
+	 *
+	 * end_enter_fault() releases the performance coordinator and notifies
+	 * sysfs waiters.  It is a no-op if already faulted.
 	 */
+	if (val > END_TEMP_FAULT_MC && end_active)
+		end_enter_fault("cell temperature exceeded 55°C limit");
+
 	mutex_unlock(&end_lock);
 
 	return count;
@@ -411,7 +473,7 @@ static int __init cinema_end_init(void)
 
 	pr_info("cinema_end: eND interface ready\n");
 	pr_info("cinema_end:   /sys/kernel/cinema_end/{enable,nd_setpoint,mode,nd_actual,cell_temp,status}\n");
-	pr_info("cinema_end:   Rev A working band: 2000–4000 mb (2–4 stops)\n");
+	pr_info("cinema_end:   Rev A working band: 2000–4000 mb (2–4 stops), fault threshold: 55°C\n");
 	return 0;
 }
 
@@ -428,3 +490,4 @@ module_exit(cinema_end_exit);
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("Electronic neutral density (eND) control interface for Xiaomi 14 Ultra");
 MODULE_AUTHOR("Xiaomi Cinema Kernel Project");
+MODULE_SOFTDEP("pre: cinema_mode");
