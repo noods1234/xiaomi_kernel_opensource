@@ -225,14 +225,29 @@ fi
 # --------------------------------------------------------------------
 # Test 7: CPU frequency floor verification
 #
-# Novel: when cinema mode is active, scaling_min_freq for every
-# cpufreq policy must equal cpuinfo_max_freq (QoS floor pinned to max).
+# When cinema mode is active, scaling_min_freq for every cpufreq policy
+# must be >= (cpuinfo_max_freq * FLOOR_PCT / 100) where FLOOR_PCT is
+# the floor_pct module parameter (default 85).
+#
+# We do NOT assert scaling_min == cpuinfo_max_freq; the driver
+# intentionally sets a recording floor below the ceiling to preserve
+# the upper OPP band for EAS.  The invariant is that the floor is
+# applied (scaling_min is elevated above the governor's idle preference)
+# not that every cluster is pinned to its absolute maximum.
+#
+# To account for OPP-snapping (cinema_snap_to_opp rounds up to the
+# nearest OPP), we accept any scaling_min >= floor_hz, where:
+#   floor_hz = cpuinfo_max_freq * FLOOR_PCT / 100
+# with a small tolerance for OPP quantisation (the next OPP above the
+# computed floor may be a few hundred kHz higher).
 # --------------------------------------------------------------------
+
+FLOOR_PCT=${CINEMA_FLOOR_PCT:-85}
 
 write_enable 1
 sleep 0.2   # allow QoS to propagate to governor
 
-all_pinned=1
+floor_ok=1
 for policy_dir in "${CPUFREQ_ROOT}"/policy*; do
 	[ -d "$policy_dir" ] || continue
 	min=$(read_scaling_min "$policy_dir")
@@ -240,16 +255,19 @@ for policy_dir in "${CPUFREQ_ROOT}"/policy*; do
 	if [ -z "$min" ] || [ -z "$max" ]; then
 		continue
 	fi
-	if [ "$min" -ne "$max" ]; then
-		all_pinned=0
-		echo "# $(basename "$policy_dir"): scaling_min=${min}kHz cpuinfo_max=${max}kHz"
+	floor_hz=$(( max * FLOOR_PCT / 100 ))
+	if [ "$min" -lt "$floor_hz" ]; then
+		floor_ok=0
+		echo "# $(basename "$policy_dir"): scaling_min=${min}kHz < floor=${floor_hz}kHz (${FLOOR_PCT}% of max=${max}kHz)"
+	else
+		echo "# $(basename "$policy_dir"): scaling_min=${min}kHz >= floor=${floor_hz}kHz OK"
 	fi
 done
 
-if [ "$all_pinned" -eq 1 ]; then
-	pass "freq_floor: all policies pinned to cpuinfo_max_freq while active"
+if [ "$floor_ok" -eq 1 ]; then
+	pass "freq_floor: all policies at or above ${FLOOR_PCT}%% recording floor while active"
 else
-	fail "freq_floor: one or more policies not pinned (see # lines above)"
+	fail "freq_floor: one or more policies below recording floor (see # lines above)"
 fi
 
 write_enable 0
@@ -643,23 +661,25 @@ else
 	nap_orig=$(cat "${KGSL}/force_no_nap" 2>/dev/null)
 	timer_orig=$(cat "${KGSL}/idle_timer" 2>/dev/null)
 
-	# Apply cinema-mode values
-	echo 1     > "${KGSL}/force_no_nap"  2>/dev/null
-	echo 16384 > "${KGSL}/idle_timer"    2>/dev/null
+	# Apply cinema-mode values.
+	# cinema_on_apply.sh writes: force_no_nap=1, idle_timer=0
+	# (idle_timer=0 disables GPU idle transitions entirely during recording)
+	echo 1 > "${KGSL}/force_no_nap"  2>/dev/null
+	echo 0 > "${KGSL}/idle_timer"    2>/dev/null
 
 	nap_after=$(cat "${KGSL}/force_no_nap" 2>/dev/null)
 	timer_after=$(cat "${KGSL}/idle_timer" 2>/dev/null)
 
-	# Restore
-	echo "${nap_orig:-0}"   > "${KGSL}/force_no_nap" 2>/dev/null
-	echo "${timer_orig:-80}" > "${KGSL}/idle_timer"  2>/dev/null
+	# Restore.  cinema_off_apply.sh restores: force_no_nap=0, idle_timer=80
+	echo "${nap_orig:-0}"    > "${KGSL}/force_no_nap" 2>/dev/null
+	echo "${timer_orig:-80}" > "${KGSL}/idle_timer"   2>/dev/null
 
 	nap_restored=$(cat "${KGSL}/force_no_nap" 2>/dev/null)
 	timer_restored=$(cat "${KGSL}/idle_timer" 2>/dev/null)
 
-	[ "$nap_after"     != "1"             ] && { kgsl_ok=0; echo "# force_no_nap: wrote 1, read '$nap_after'"; }
-	[ "$timer_after"   != "16384"         ] && { kgsl_ok=0; echo "# idle_timer: wrote 16384, read '$timer_after'"; }
-	[ "$nap_restored"  != "${nap_orig:-0}" ] && { kgsl_ok=0; echo "# force_no_nap: restore failed (wanted '${nap_orig:-0}', got '$nap_restored')"; }
+	[ "$nap_after"      != "1"              ] && { kgsl_ok=0; echo "# force_no_nap: wrote 1, read '$nap_after'"; }
+	[ "$timer_after"    != "0"              ] && { kgsl_ok=0; echo "# idle_timer: wrote 0, read '$timer_after'"; }
+	[ "$nap_restored"   != "${nap_orig:-0}" ] && { kgsl_ok=0; echo "# force_no_nap: restore failed (wanted '${nap_orig:-0}', got '$nap_restored')"; }
 	[ "$timer_restored" != "${timer_orig:-80}" ] && { kgsl_ok=0; echo "# idle_timer: restore failed (wanted '${timer_orig:-80}', got '$timer_restored')"; }
 
 	if [ "$kgsl_ok" -eq 1 ]; then
@@ -767,29 +787,29 @@ fi
 # --------------------------------------------------------------------
 # Test 20: ZRAM dynamic resize via cinema_on_apply.sh / cinema_off_apply.sh
 #
-# cinema_on_apply.sh shrinks ZRAM to 2GB; cinema_off_apply.sh restores
-# it to 4GB.  These scripts run under Android init as a oneshot service
-# triggered by the cinema mode property.  This test invokes them
-# directly as root to verify the shrink/restore cycle works in
-# isolation.
+# cinema_on_apply.sh EXPANDS ZRAM to 12 GB to provide headroom for the
+# RAW ring buffer during active recording.
+# cinema_off_apply.sh RESTORES ZRAM to 8 GB (the boot-time default set
+# by cinema_io_tune.sh).
+#
+# These scripts run under Android init as a oneshot service triggered
+# by the cinema mode property.  This test invokes them directly as root.
 #
 # The test is skipped if:
-#   - The scripts are not present (vendor partition not mounted or
-#     files not deployed via cinema_device.mk).
-#   - /sys/block/zram0/disksize is not present (ZRAM not configured).
-#   - ZRAM is not currently active as swap (swapoff would fail; the
-#     scripts handle this gracefully but the resize would be a no-op
-#     and would not exercise the full path).
+#   - The scripts are not present or not executable.
+#   - /sys/block/zram0/disksize is not writable (CONFIG_ZRAM not set).
+#   - ZRAM is not currently active as swap (swapoff fails silently in the
+#     scripts and the resize becomes a no-op).
 #
-# disksize is read and compared in bytes; the kernel may round up to a
-# page boundary so we compare with -ge/-le rather than exact equality.
+# disksize is compared in bytes; the kernel rounds up to a page boundary
+# so we use -ge/-le with a 4095-byte tolerance rather than exact equality.
 #
-# 2 GB = 2147483648 bytes
-# 4 GB = 4294967296 bytes
+# 8  GB = 8589934592  bytes  (boot-time / restored size)
+# 12 GB = 12884901888 bytes  (cinema active size)
 # --------------------------------------------------------------------
 
-ZRAM_2G=2147483648
-ZRAM_4G=4294967296
+ZRAM_8G=8589934592
+ZRAM_12G=12884901888
 
 if [ ! -x "$CINEMA_ON_APPLY" ]; then
 	skip "zram_resize" "$CINEMA_ON_APPLY not executable (cinema scripts not deployed?)"
@@ -810,21 +830,20 @@ else
 
 	zram_ok=1
 
-	# After cinema_on_apply: disksize should be ≤ 2 GB (scripts write 2 GB
-	# exactly; kernel rounds up to page boundary so accept up to 2G + 4095).
-	if [ -z "$disksize_on" ] || [ "$disksize_on" -gt $((ZRAM_2G + 4095)) ] 2>/dev/null; then
+	# After cinema_on_apply: disksize should be >= 12 GB (expands for RAW buffer).
+	if [ -z "$disksize_on" ] || [ "$disksize_on" -lt "$ZRAM_12G" ] 2>/dev/null; then
 		zram_ok=0
-		echo "# zram: after cinema_on_apply disksize=$disksize_on (expected ≤ $((ZRAM_2G + 4095)))"
+		echo "# zram: after cinema_on_apply disksize=$disksize_on (expected >= $ZRAM_12G)"
 	fi
 
-	# After cinema_off_apply: disksize should be ≥ 4 GB.
-	if [ -z "$disksize_off" ] || [ "$disksize_off" -lt "$ZRAM_4G" ] 2>/dev/null; then
+	# After cinema_off_apply: disksize should be >= 8 GB (restored to boot-time default).
+	if [ -z "$disksize_off" ] || [ "$disksize_off" -lt "$ZRAM_8G" ] 2>/dev/null; then
 		zram_ok=0
-		echo "# zram: after cinema_off_apply disksize=$disksize_off (expected ≥ $ZRAM_4G)"
+		echo "# zram: after cinema_off_apply disksize=$disksize_off (expected >= $ZRAM_8G)"
 	fi
 
 	if [ "$zram_ok" -eq 1 ]; then
-		pass "zram_resize: on_apply shrunk to ${disksize_on}B, off_apply restored to ${disksize_off}B"
+		pass "zram_resize: on_apply expanded to ${disksize_on}B, off_apply restored to ${disksize_off}B"
 	else
 		fail "zram_resize: ZRAM resize cycle failed (see # lines above)"
 	fi

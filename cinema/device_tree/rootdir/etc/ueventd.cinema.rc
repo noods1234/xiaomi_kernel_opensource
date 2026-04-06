@@ -15,4 +15,22 @@
 #
 # Format: <path>  <permissions>  <owner>  <group>
 
-/sys/kernel/cinema_mode/enable  0644  system  system
+# cinema_mode: written by init on persist.cinema.mode property change.
+# Owner system:system so no privilege escalation required from init.
+/sys/kernel/cinema_mode/enable      0644  system  system
+
+# cinema_end: control nodes written by system_server or the MCU daemon.
+# The daemon and system_server run as system uid; using system:system
+# means they can write without CAP_DAC_OVERRIDE.
+# The kernel driver still enforces CAP_SYS_ADMIN as a second gate.
+/sys/kernel/cinema_end/mcu_online   0660  system  system
+/sys/kernel/cinema_end/enable       0660  system  system
+/sys/kernel/cinema_end/nd_setpoint  0660  system  system
+/sys/kernel/cinema_end/mode         0660  system  system
+/sys/kernel/cinema_end/fault_clear  0220  system  system
+
+# Telemetry nodes: daemon writes, apps read.
+# 0664: system:system owns write; camera app (in group camera) can read.
+/sys/kernel/cinema_end/nd_actual    0664  system  camera
+/sys/kernel/cinema_end/cell_temp    0664  system  camera
+/sys/kernel/cinema_end/status       0444  system  system

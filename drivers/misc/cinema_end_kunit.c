@@ -45,10 +45,6 @@
 #define END_MODE_MAX		END_MODE_DOF_HOLD
 #define END_TEMP_FAULT_MC	55000
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                              */
-/* ------------------------------------------------------------------ */
-
 /*
  * end_test_nd_valid - replicate nd_setpoint_store / nd_actual_store range check.
  * Returns true if the value would be accepted.
@@ -86,9 +82,12 @@ static bool end_test_temp_fault(int val)
 
 /*
  * end_test_status_str - replicate status_show's state-to-string logic.
+ * Priority: offline > fault > active > standby.
  */
-static const char *end_test_status_str(bool active, bool fault)
+static const char *end_test_status_str(bool mcu_online, bool active, bool fault)
 {
+	if (!mcu_online)
+		return "offline";
 	if (fault)
 		return "fault";
 	if (active)
@@ -227,24 +226,26 @@ static void end_test_temp_fault_threshold(struct kunit *test)
 /*
  * end_test_status_string - validate the status_show state machine.
  *
- * The priority order is: fault > active > standby.
- * A faulted device must show "fault" even if end_active is also true
- * (which can happen if end_enter_fault() races before end_active is
- * cleared — though in practice end_enter_fault sets end_active = false).
+ * Priority order: offline > fault > active > standby.
+ * When mcu_online is false, status is "offline" regardless of other state.
  */
 static void end_test_status_string(struct kunit *test)
 {
-	/* Standby: !active, !fault */
-	KUNIT_EXPECT_STREQ(test, end_test_status_str(false, false), "standby");
+	/* Offline: MCU not present — overrides everything */
+	KUNIT_EXPECT_STREQ(test, end_test_status_str(false, false, false), "offline");
+	KUNIT_EXPECT_STREQ(test, end_test_status_str(false, true,  false), "offline");
+	KUNIT_EXPECT_STREQ(test, end_test_status_str(false, false, true),  "offline");
+	KUNIT_EXPECT_STREQ(test, end_test_status_str(false, true,  true),  "offline");
 
-	/* Active: active, !fault */
-	KUNIT_EXPECT_STREQ(test, end_test_status_str(true,  false), "active");
+	/* Standby: MCU online, not active, not faulted */
+	KUNIT_EXPECT_STREQ(test, end_test_status_str(true,  false, false), "standby");
 
-	/* Fault overrides active */
-	KUNIT_EXPECT_STREQ(test, end_test_status_str(true,  true),  "fault");
+	/* Active: MCU online, active, not faulted */
+	KUNIT_EXPECT_STREQ(test, end_test_status_str(true,  true,  false), "active");
 
-	/* Fault with !active */
-	KUNIT_EXPECT_STREQ(test, end_test_status_str(false, true),  "fault");
+	/* Fault: MCU online, faulted (overrides active) */
+	KUNIT_EXPECT_STREQ(test, end_test_status_str(true,  true,  true),  "fault");
+	KUNIT_EXPECT_STREQ(test, end_test_status_str(true,  false, true),  "fault");
 }
 
 /* ------------------------------------------------------------------ */
@@ -386,44 +387,66 @@ static void end_test_status_format(struct kunit *test)
  *
  * fault_clear is only accepted when:
  *   (a) value is true (writing "0" is a no-op)
- *   (b) end_active == false (-EBUSY otherwise)
+ *   (b) mcu_online == true (-ENODEV otherwise)
+ *   (c) end_active == false (-EBUSY otherwise)
  *
  * This test mirrors the guard logic in fault_clear_store().
  */
 static void end_test_fault_clear_semantics(struct kunit *test)
 {
+	bool mcu_online = true;
 	bool fault  = true;
 	bool active = false;
 	bool clear;
 	int ret;
 
-	/* --- Scenario A: clear accepted (not active, is faulted) --- */
+	/* --- Scenario A: clear accepted (MCU online, not active, faulted) --- */
 	ret = kstrtobool("1", &clear);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
-	/* Guard: active check */
+	/* Guards: MCU online check, then active check */
+	KUNIT_EXPECT_TRUE_MSG(test,  mcu_online,
+			      "guard A: MCU must be online before clear");
 	KUNIT_EXPECT_FALSE_MSG(test, active,
 			       "guard A: must not be active before clear");
 
-	if (!active && clear && fault) {
+	if (mcu_online && !active && clear && fault) {
 		fault = false;		/* simulate fault_clear_store body */
 	}
 	KUNIT_EXPECT_FALSE_MSG(test, fault, "fault must be cleared after write");
 
 	/* --- Scenario B: no-op when clear == false --- */
+	mcu_online = true;
 	fault  = true;
 	active = false;
 	ret = kstrtobool("0", &clear);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 	KUNIT_EXPECT_FALSE(test, clear);
 
-	if (!active && clear && fault)
+	if (mcu_online && !active && clear && fault)
 		KUNIT_FAIL(test, "fault_clear must not fire when clear==false");
 
 	KUNIT_EXPECT_TRUE_MSG(test, fault,
 			      "fault must persist when clear==false written");
 
-	/* --- Scenario C: -EBUSY guard when active --- */
+	/* --- Scenario C1: -ENODEV guard when MCU offline --- */
+	mcu_online = false;
+	fault  = true;
+	active = false;
+	clear  = true;
+
+	KUNIT_EXPECT_FALSE_MSG(test, mcu_online,
+			       "guard C1: MCU must be offline to trigger -ENODEV");
+	/* Simulate the guard — would return -ENODEV */
+	if (!mcu_online) {
+		KUNIT_EXPECT_TRUE_MSG(test, fault,
+				      "scenario C1: fault must persist when MCU offline");
+	} else {
+		KUNIT_FAIL(test, "guard C1: should not reach clear body when MCU offline");
+	}
+
+	/* --- Scenario C2: -EBUSY guard when active --- */
+	mcu_online = true;
 	fault  = true;
 	active = true;
 	clear  = true;
@@ -435,9 +458,9 @@ static void end_test_fault_clear_semantics(struct kunit *test)
 		 * the body of the clear never executes.
 		 */
 		KUNIT_EXPECT_TRUE_MSG(test, active,
-				      "guard C: active must block clear");
+				      "guard C2: active must block clear");
 	} else {
-		KUNIT_FAIL(test, "guard C: should not reach clear body while active");
+		KUNIT_FAIL(test, "guard C2: should not reach clear body while active");
 	}
 
 	/* fault must be unchanged */
@@ -445,12 +468,13 @@ static void end_test_fault_clear_semantics(struct kunit *test)
 			      "fault must not clear when eND is active");
 
 	/* --- Scenario D: idempotent — clear while not faulted --- */
+	mcu_online = true;
 	fault  = false;
 	active = false;
 	clear  = true;
 
 	/* Writing "1" to fault_clear when not faulted is a no-op */
-	if (!active && clear && fault) {
+	if (mcu_online && !active && clear && fault) {
 		KUNIT_FAIL(test, "scenario D: fault was false; body must not fire");
 	}
 	KUNIT_EXPECT_FALSE_MSG(test, fault,

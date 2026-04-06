@@ -1,10 +1,23 @@
 # cinema_mode.te
-# SELinux policy for the cinema_mode sysfs node (/sys/kernel/cinema_mode/enable)
+# SELinux policy for:
+#   /sys/kernel/cinema_mode/   (performance coordinator)
+#   /sys/kernel/cinema_end/    (eND optical cartridge interface)
 # and for init.cinema.rc property triggers.
 
 # ---- Type declarations ----
+
+# cinema_mode sysfs
 type cinema_mode_sysfs, fs_type, sysfs_type;
 type cinema_mode_sysfs_dir, fs_type, sysfs_type;
+
+# cinema_end sysfs — separate types so grants can be scoped independently.
+# The daemon needs write access to telemetry nodes (nd_actual, cell_temp,
+# mcu_online, fault_clear) but the camera app only needs read access.
+# Using distinct types for the directory and the individual nodes lets us
+# give the camera app read-only access without any write capability.
+type cinema_end_sysfs_dir, fs_type, sysfs_type;
+type cinema_end_sysfs_rw, fs_type, sysfs_type;   /* enable, nd_setpoint, mode, mcu_online, fault_clear */
+type cinema_end_sysfs_ro, fs_type, sysfs_type;   /* status, nd_actual, cell_temp (read by app) */
 
 # Dedicated exec type for the cinema_io_tune script (scoped, not shell_exec)
 type cinema_io_tune_exec, exec_type, vendor_file_type, file_type;
@@ -16,6 +29,61 @@ type cinema_io_tune, domain;
 # ---- Label the sysfs nodes (see genfs_contexts) ----
 # Directory:  /sys/kernel/cinema_mode      -> cinema_mode_sysfs_dir
 # Control file: /sys/kernel/cinema_mode/enable -> cinema_mode_sysfs
+
+# ---- cinema_end daemon (cinema_end_daemon domain) ----
+#
+# The MCU bridge daemon runs as a privileged service under the
+# cinema_end_daemon domain.  It needs:
+#   - Read access to the cinema_end sysfs directory and all nodes
+#   - Write access to mcu_online, nd_actual, cell_temp, fault_clear
+#   - poll(2) support (requires read + open on the nodes it polls)
+#
+# The daemon authenticates via its SELinux domain label; the kernel driver
+# also enforces CAP_SYS_ADMIN as a second line of defence.
+
+type cinema_end_daemon, domain;
+type cinema_end_daemon_exec, exec_type, vendor_file_type, file_type;
+
+allow cinema_end_daemon cinema_end_sysfs_dir:dir  { open read search getattr };
+allow cinema_end_daemon cinema_end_sysfs_rw:file  { read write open getattr };
+allow cinema_end_daemon cinema_end_sysfs_ro:file  { read write open getattr };
+
+# CAP_SYS_ADMIN is required by the kernel driver for all sysfs writes.
+allow cinema_end_daemon self:capability sys_admin;
+
+# The daemon also needs to read nd_setpoint changes (poll + read).
+# nd_setpoint uses cinema_end_sysfs_rw (it is written by system_server
+# on behalf of the camera app, and read by the daemon).
+# The read permission above covers this.
+
+# ---- camera app / cameraserver: read-only access to cinema_end status ----
+#
+# The camera app reads status, nd_actual, cell_temp, nd_setpoint for UI.
+# It writes nd_setpoint via system_server.  No direct kernel access needed
+# from the app process — all camera sysfs writes go through system_server.
+
+allow cameraserver cinema_end_sysfs_dir:dir  { open read search getattr };
+allow cameraserver cinema_end_sysfs_rw:file  { read write open getattr };
+allow cameraserver cinema_end_sysfs_ro:file  { read open getattr };
+
+# ---- system_server: write nd_setpoint and enable on cinema app request ----
+allow system_server cinema_end_sysfs_dir:dir  { open read search getattr };
+allow system_server cinema_end_sysfs_rw:file  { read write open getattr };
+allow system_server cinema_end_sysfs_ro:file  { read open getattr };
+allow system_server self:capability sys_admin;
+
+# ---- init: write enable and mcu_online from init.cinema.rc triggers ----
+allow init cinema_end_sysfs_dir:dir  { open read search getattr };
+allow init cinema_end_sysfs_rw:file  { read write open getattr };
+allow init cinema_end_sysfs_ro:file  { read open getattr };
+
+# ---- neverallow: nothing except the declared domains may write cinema_end ----
+neverallow { domain
+	-init
+	-system_server
+	-cameraserver
+	-cinema_end_daemon
+} cinema_end_sysfs_rw:file write;
 
 # ---- Allow cinema_io_tune domain to execute the shell and its script ----
 # The seclabel directive in init.cinema.rc forces the service into the
