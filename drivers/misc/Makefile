@@ -68,4 +68,5 @@ obj-$(CONFIG_MI_HARDWARE_ID)	+= hwid/
 obj-$(CONFIG_CINEMA_END)		+= cinema_end.o
 obj-$(CONFIG_CINEMA_MODE)		+= cinema_mode.o
 obj-$(CONFIG_CINEMA_MODE_KUNIT_TEST)	+= cinema_mode_kunit.o
+obj-$(CONFIG_CINEMA_END_KUNIT_TEST)	+= cinema_end_kunit.o
 obj-$(CONFIG_FAKE_SM8650_CPUFREQ)	+= fake_sm8650_cpufreq.o

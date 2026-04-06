@@ -606,6 +606,24 @@ config CINEMA_MODE_KUNIT_TEST
 
 	  If unsure, say N.
 
+config CINEMA_END_KUNIT_TEST
+	tristate "KUnit tests for cinema_end validation and state logic" if !KUNIT_ALL_TESTS
+	depends on CINEMA_END && KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  KUnit test suite for the validation and state logic layer of
+	  cinema_end.c.  Tests are pure logic exercises with no real LC
+	  hardware, kobject, or sysfs infrastructure required.
+
+	  Covered scenarios: nd_setpoint and nd_actual range validation,
+	  mode range validation, cell_temp sanity bounds, temperature fault
+	  threshold (off-by-one coverage of 55°C boundary), status string
+	  selection (fault > active > standby priority), enable_store kstrtobool
+	  parsing, integer attribute sysfs output format, fault_clear state
+	  machine semantics, and constant consistency with hardware specs.
+
+	  If unsure, say N.
+
 config FAKE_SM8650_CPUFREQ
 	tristate "Simulated SM8650 cpufreq topology (QEMU / testing only)"
 	depends on CPU_FREQ

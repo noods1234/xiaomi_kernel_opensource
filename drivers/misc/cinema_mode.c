@@ -102,6 +102,40 @@ static DEFINE_MUTEX(cinema_lock);
 
 /* ------------------------------------------------------------------ */
 
+/*
+ * cinema_snap_to_opp - round target_khz up to the nearest valid OPP.
+ *
+ * FREQ_QOS_MIN values that land between two OPP steps force the DVFS
+ * to select the higher step on every governor decision, wasting a small
+ * amount of energy continuously.  Snapping to an exact OPP boundary
+ * eliminates that overhead.
+ *
+ * Iterates policy->freq_table (set by the platform cpufreq driver) for
+ * the lowest entry >= target_khz.  Falls back to target_khz itself if
+ * the table is absent (e.g. FAKE_SM8650_CPUFREQ under QEMU) or if no
+ * entry is >= target_khz (impossible when target_khz <= max_freq, but
+ * guarded defensively).
+ *
+ * Must be called with a policy reference held (cpufreq_cpu_get).
+ */
+static unsigned int cinema_snap_to_opp(struct cpufreq_policy *policy,
+					unsigned int target_khz)
+{
+	struct cpufreq_frequency_table *pos;
+	unsigned int best = policy->cpuinfo.max_freq;
+
+	if (!policy->freq_table)
+		return target_khz;
+
+	cpufreq_for_each_valid_entry(pos, policy->freq_table) {
+		if (pos->frequency >= target_khz && pos->frequency < best)
+			best = pos->frequency;
+	}
+
+	/* If no entry >= target_khz was found, best still equals max_freq */
+	return best;
+}
+
 /* Forward declaration required because cinema_activate() calls
  * cinema_deactivate() for partial-failure unwind before the latter
  * is defined.
@@ -138,9 +172,15 @@ static int cinema_activate(void)
 		 * floor_pct < 100 preserves the upper OPP band for EAS;
 		 * the governor may still select higher OPPs based on demand.
 		 * Do-it-in-kernel-integer: no fp, overflow-safe for u32 kHz.
+		 *
+		 * Snap to the nearest OPP at or above the computed floor so
+		 * the FREQ_QOS_MIN value exactly matches a step the DVFS knows
+		 * about.  A mid-step floor forces a round-up on every governor
+		 * tick; an OPP-aligned floor costs nothing extra.
 		 */
 		floor = (unsigned int)(
 			(u64)policy->cpuinfo.max_freq * floor_pct / 100);
+		floor = cinema_snap_to_opp(policy, floor);
 
 		ret = freq_qos_add_request(&policy->constraints,
 					   &freq_reqs[cpu],

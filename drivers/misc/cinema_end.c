@@ -56,6 +56,10 @@
  *   status       ro  Human-readable state string: "standby", "active",
  *                    or "fault".  Reflects end_active and end_fault flags.
  *
+ *   fault_clear  wo  Write "1" after MCU recovery to clear fault state.
+ *                    Only accepted when end_active == false (-EBUSY otherwise).
+ *                    Writing "0" is a no-op.  Requires CAP_SYS_ADMIN.
+ *
  * Integration with cinema_mode
  * ----------------------------
  * Enabling eND also enables the cinema_mode performance coordinator
@@ -423,6 +427,65 @@ static ssize_t status_show(struct kobject *kobj,
 }
 
 /* ------------------------------------------------------------------ */
+/* fault_clear (write-only daemon recovery signal)                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * fault_clear_store - clear the fault state after MCU recovery.
+ *
+ * The typical fault recovery sequence is:
+ *   1. Kernel detects over-temperature → end_enter_fault() fires,
+ *      status → "fault", cinema_mode deactivated.
+ *   2. MCU daemon notices status == "fault" via poll()/read.
+ *   3. MCU cools down; daemon signals kernel recovery by writing "1"
+ *      to fault_clear.
+ *   4. Kernel clears end_fault; status → "standby".
+ *   5. Camera app may now re-enable via enable_store("1").
+ *
+ * Invariant: fault_clear is only accepted when eND is in standby
+ * (end_active == false).  The app must explicitly disable eND before
+ * the daemon can clear the fault — this prevents a spurious clear from
+ * racing with an active recording session.
+ *
+ * Writing "0" is a no-op.  Writing while end_active returns -EBUSY.
+ * If not currently faulted, writing "1" is a no-op (idempotent).
+ */
+static ssize_t fault_clear_store(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 const char *buf, size_t count)
+{
+	bool clear;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (kstrtobool(buf, &clear))
+		return -EINVAL;
+
+	if (!clear)
+		return count;	/* writing "0" is a no-op */
+
+	mutex_lock(&end_lock);
+
+	if (end_active) {
+		mutex_unlock(&end_lock);
+		return -EBUSY;	/* must disable eND before clearing fault */
+	}
+
+	if (end_fault) {
+		end_fault = false;
+		pr_info("cinema_end: fault cleared by daemon\n");
+		sysfs_notify(end_kobj, NULL, "status");
+	}
+
+	mutex_unlock(&end_lock);
+	return count;
+}
+
+static struct kobj_attribute fault_clear_attr =
+	__ATTR(fault_clear, 0200, NULL, fault_clear_store);
+
+/* ------------------------------------------------------------------ */
 /* Attribute wiring                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -446,6 +509,7 @@ static struct attribute *end_attrs[] = {
 	&nd_actual_attr.attr,
 	&cell_temp_attr.attr,
 	&status_attr.attr,
+	&fault_clear_attr.attr,
 	NULL,
 };
 
@@ -472,7 +536,7 @@ static int __init cinema_end_init(void)
 	}
 
 	pr_info("cinema_end: eND interface ready\n");
-	pr_info("cinema_end:   /sys/kernel/cinema_end/{enable,nd_setpoint,mode,nd_actual,cell_temp,status}\n");
+	pr_info("cinema_end:   /sys/kernel/cinema_end/{enable,nd_setpoint,mode,nd_actual,cell_temp,status,fault_clear}\n");
 	pr_info("cinema_end:   Rev A working band: 2000–4000 mb (2–4 stops), fault threshold: 55°C\n");
 	return 0;
 }
