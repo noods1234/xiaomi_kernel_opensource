@@ -65,16 +65,15 @@ on boot
     write /sys/devices/system/cpu/cpufreq/policy4/scaling_governor schedutil
     write /sys/devices/system/cpu/cpufreq/policy7/scaling_governor schedutil
 
-    # Schedutil rate-limit: 500 µs up, 20 ms down — fast response to
-    # sudden load spikes (new video frame), conservative scale-down.
+    # Schedutil rate-limit: 500 µs up-ramp only.  No down_rate_limit_us —
+    # leaving it at the kernel default (0 = unlimited) lets EAS scale down
+    # immediately when load drops.  A forced 20 ms floor prevents the
+    # scheduler from reclaiming cores between ISP bursts and defeats
+    # Energy-Aware Scheduling on the SM8650 big.LITTLE topology.
     write /sys/devices/system/cpu/cpufreq/policy0/schedutil/up_rate_limit_us 500
-    write /sys/devices/system/cpu/cpufreq/policy0/schedutil/down_rate_limit_us 20000
     write /sys/devices/system/cpu/cpufreq/policy2/schedutil/up_rate_limit_us 500
-    write /sys/devices/system/cpu/cpufreq/policy2/schedutil/down_rate_limit_us 20000
     write /sys/devices/system/cpu/cpufreq/policy4/schedutil/up_rate_limit_us 500
-    write /sys/devices/system/cpu/cpufreq/policy4/schedutil/down_rate_limit_us 20000
     write /sys/devices/system/cpu/cpufreq/policy7/schedutil/up_rate_limit_us 500
-    write /sys/devices/system/cpu/cpufreq/policy7/schedutil/down_rate_limit_us 20000
 
     # ---- GPU (Adreno 750) ----
     # msm_adreno_tz governor — set min clock floor to level 3 (~55% of max,

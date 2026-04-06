@@ -8,18 +8,15 @@ genfscon sysfs /kernel/cinema_mode/enable   u:object_r:cinema_mode_sysfs:s0
 # cinema_end directory
 genfscon sysfs /kernel/cinema_end           u:object_r:cinema_end_sysfs_dir:s0
 
-# cinema_end writable control nodes (daemon + system_server write)
-genfscon sysfs /kernel/cinema_end/mcu_online    u:object_r:cinema_end_sysfs_rw:s0
-genfscon sysfs /kernel/cinema_end/enable        u:object_r:cinema_end_sysfs_rw:s0
-genfscon sysfs /kernel/cinema_end/nd_setpoint   u:object_r:cinema_end_sysfs_rw:s0
-genfscon sysfs /kernel/cinema_end/mode          u:object_r:cinema_end_sysfs_rw:s0
-genfscon sysfs /kernel/cinema_end/fault_clear   u:object_r:cinema_end_sysfs_rw:s0
+# cinema_end app-rw: camera app / system_server write path
+genfscon sysfs /kernel/cinema_end/enable        u:object_r:cinema_end_sysfs_app_rw:s0
+genfscon sysfs /kernel/cinema_end/nd_setpoint   u:object_r:cinema_end_sysfs_app_rw:s0
+genfscon sysfs /kernel/cinema_end/mode          u:object_r:cinema_end_sysfs_app_rw:s0
 
-# cinema_end daemon-writable / app-readable telemetry nodes
-# nd_actual and cell_temp are written by the daemon but read by the app.
-# They use cinema_end_sysfs_ro so the app gets read access via cameraserver,
-# and the daemon gets write access via the explicit cinema_end_sysfs_ro write
-# grant in cinema_mode.te.
-genfscon sysfs /kernel/cinema_end/nd_actual     u:object_r:cinema_end_sysfs_ro:s0
-genfscon sysfs /kernel/cinema_end/cell_temp     u:object_r:cinema_end_sysfs_ro:s0
+# cinema_end daemon-rw: MCU bridge daemon write path only
+genfscon sysfs /kernel/cinema_end/nd_actual     u:object_r:cinema_end_sysfs_daemon_rw:s0
+genfscon sysfs /kernel/cinema_end/cell_temp     u:object_r:cinema_end_sysfs_daemon_rw:s0
+genfscon sysfs /kernel/cinema_end/fault_clear   u:object_r:cinema_end_sysfs_daemon_rw:s0
+
+# cinema_end ro: read-only status for all actors
 genfscon sysfs /kernel/cinema_end/status        u:object_r:cinema_end_sysfs_ro:s0

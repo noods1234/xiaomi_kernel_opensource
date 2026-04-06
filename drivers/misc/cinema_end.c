@@ -5,84 +5,80 @@
  * For Xiaomi 14 Ultra (aurora) / SM8650 (Pineapple).
  *
  * Hardware: LC-Tec PolarView eND(NBf2.0) dual-cell guest-host cartridge,
- * driven by an STM32U5 + AD5696R + TPS65131 sidecar board.  The MCU
- * connects to the phone via USB-CDC (VID 0x0483 / PID 0x5740) when the
- * cinema optical module is attached.
+ * driven by an STM32U5 + AD5696R + TPS65131 sidecar board connected via
+ * USB-CDC (VID 0x0483 / PID 0x5740).
  *
  * Architecture
  * ------------
- * This driver owns the kernel-side control and telemetry interface.
- * The actual LC drive waveform generation is performed by a privileged
- * userspace daemon (cinema_end_daemon) that:
+ * This driver owns the kernel-side state machine and sysfs interface.
+ * The MCU bridge daemon communicates in two ways:
  *
- *   1. Monitors the USB bus for the STM32U5 device.
- *   2. Writes "1" to mcu_online when the MCU enumerates, "0" when it
- *      disconnects.
- *   3. Reads nd_setpoint (via poll + read) for setpoint changes from
- *      the camera app.
- *   4. Writes nd_actual and cell_temp to report MCU telemetry.
- *   5. Writes "1" to fault_clear after a fault condition is resolved.
+ *   1. Opens /dev/cinema_end (exclusive).  Holding the fd signals MCU
+ *      presence.  Closing it (including on daemon crash via OS cleanup)
+ *      atomically transitions the kernel to offline — no daemon cooperation
+ *      required.  This is more reliable than a write-only sysfs node that
+ *      stays set if the daemon crashes.
  *
- * Kernel responsibilities:
- *   - State machine: offline → standby → active ↔ fault
- *   - sysfs interface for camera app → MCU command path
- *   - sysfs telemetry sink for MCU daemon → kernel → userspace path
- *   - ND setpoint validation
- *   - Temperature fault detection at END_TEMP_FAULT_MC (55°C)
- *   - State interlock with cinema_mode performance coordinator
- *   - sysfs_notify on every state transition so poll(2) waiters wake
+ *   2. Reads/writes sysfs nodes for telemetry and setpoints.
  *
- * MCU presence state machine
- * --------------------------
- *
- *   mcu_online=0 → [offline]  mcu_online=1 → [standby]
+ * State machine
+ * -------------
+ *   [offline] ←→ open()/close() on /dev/cinema_end ←→ [standby]
  *   [standby]  enable=1 → [active]
  *   [active]   enable=0 → [standby]
- *   [active]   temp > 55°C or mcu_online=0 → [fault]
- *   [fault]    disable + fault_clear=1 → [standby]  (if MCU still online)
- *   [fault]    mcu_online=0 while faulted → [offline]  (hardware gone)
+ *   [active]   cell_temp > FAULT_MC or /dev/close → [fault]
+ *   [fault]    disable + fault_clear=1 → [standby]
+ *
+ *   Temperature faults are NOT auto-cleared on daemon reconnect.
+ *   The MCU must confirm cell temperature is below threshold before the
+ *   daemon writes fault_clear=1; kernel cannot know this from a connect
+ *   event alone.
+ *
+ * Temperature thresholds
+ * ----------------------
+ *   END_TEMP_WARN_MC  (55 000 m°C / 55°C): kobject_uevent KOBJ_CHANGE
+ *     with CINEMA_EVENT=TEMP_WARN.  Non-fatal; operator is notified.
+ *   END_TEMP_FAULT_MC (65 000 m°C / 65°C): enter fault state, release
+ *     cinema_mode coordinator, sysfs_notify status.
+ *
+ *   The LC-Tec PolarView cartridge is rated to 70°C continuous use.
+ *   55°C is a soft warning; 65°C is the hard-stop with 5°C margin.
  *
  * Sysfs nodes (under /sys/kernel/cinema_end/):
  *
- *   mcu_online   rw  0 = MCU offline/disconnected, 1 = MCU online.
- *                    Written by the daemon on USB connect/disconnect.
- *                    Transitioning to 0 while active enters fault state.
- *                    Requires CAP_SYS_ADMIN to write.
+ *   enable       rw  0=standby, 1=active.  -ENODEV if offline or faulted.
+ *                    Writing 1 activates cinema_mode coordinator.
+ *                    Requires CAP_SYS_ADMIN.
  *
- *   enable       rw  0 = standby, 1 = active.
- *                    Requires CAP_SYS_ADMIN to write.
- *                    Returns -ENODEV if MCU is offline.
- *                    Writing 1 also activates cinema_mode coordinator.
- *
- *   nd_setpoint  rw  Target ND in millibels [0, END_ND_MAX_MB = 7000].
- *                    Requires CAP_SYS_ADMIN to write.
- *                    sysfs_notify fired on change (daemon uses poll).
+ *   nd_setpoint  rw  Target ND in millibels [0, 7000].
+ *                    0 means "park/clear" — daemon must apply park sequence.
+ *                    Requires CAP_SYS_ADMIN.  sysfs_notify on change.
  *
  *   mode         rw  0=manual, 1=exposure_hold, 2=dof_hold.
- *                    Requires CAP_SYS_ADMIN to write.
+ *                    Requires CAP_SYS_ADMIN.
  *
- *   nd_actual    rw  MCU-reported current ND in millibels [0, 7000].
- *                    Written by daemon from MCU telemetry.
- *                    Requires CAP_SYS_ADMIN to write.
+ *   nd_actual    rw  MCU-reported ND in millibels [0, 7000].
+ *                    Written by daemon.  Requires CAP_SYS_ADMIN.
  *
- *   cell_temp    rw  LC cell temperature in m°C [-40000, 125000].
- *                    Written by daemon from TMP117 telemetry.
- *                    Triggers fault if > END_TEMP_FAULT_MC (55 000 m°C).
- *                    Requires CAP_SYS_ADMIN to write.
+ *   cell_temp    rw  Cell temperature in m°C [-40000, 125000].
+ *                    Written by daemon.  Triggers TEMP_WARN at 55°C,
+ *                    fault at 65°C.  Requires CAP_SYS_ADMIN.
  *
  *   status       ro  "offline" | "standby" | "active" | "fault"
  *
- *   fault_clear  wo  Write "1" after MCU recovery to clear fault.
- *                    -EBUSY if end_active; -ENODEV if MCU offline.
- *                    No-op if not faulted or if value is "0".
- *                    Requires CAP_SYS_ADMIN.
+ *   fault_clear  wo  Write "1" after MCU confirms recovery.  -ENODEV if
+ *                    offline; -EBUSY if active.  Requires CAP_SYS_ADMIN.
  *
  * Copyright (c) 2024, Xiaomi Cinema Kernel Project
  */
 
+#include "cinema.h"
 #include <linux/capability.h>
+#include <linux/fs.h>
 #include <linux/kernel.h>
+#include <linux/kobject.h>
 #include <linux/limits.h>
+#include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/sysfs.h>
@@ -99,31 +95,27 @@
 #define END_MODE_MAX		END_MODE_DOF_HOLD
 
 /*
- * Temperature fault threshold: 55 000 m°C (55°C).
- * The LC-Tec cartridge operating limit under active drive.  The TMP117
- * hardware alert fires first; this is the kernel-side second net.
+ * Two-tier temperature protection.
+ * WARN: kobject_uevent notifies the camera app; recording continues.
+ * FAULT: hard stop, cinema_mode released, sysfs status → "fault".
  */
-#define END_TEMP_FAULT_MC	55000
-
-/* ------------------------------------------------------------------ */
-/* Inter-module API (from cinema_mode.c)                                */
-/* ------------------------------------------------------------------ */
-
-int cinema_mode_set_active(bool on);
+#define END_TEMP_WARN_MC	55000	/* 55°C — soft warning */
+#define END_TEMP_FAULT_MC	65000	/* 65°C — hard fault, 5°C below 70°C rating */
 
 /* ------------------------------------------------------------------ */
 /* State                                                                */
 /* ------------------------------------------------------------------ */
 
-static bool end_mcu_online;	/* MCU (STM32U5) connected and enumerated */
-static bool end_active;		/* eND hardware enabled */
-static bool end_fault;		/* MCU or hardware fault signalled */
+static bool end_mcu_online;	/* /dev/cinema_end is held open by daemon */
+static bool end_active;
+static bool end_fault;
 static int  end_nd_setpoint;
 static int  end_mode;
 static int  end_nd_actual;
 static int  end_cell_temp;
 
-static struct kobject *end_kobj;
+static struct kobject    *end_kobj;
+static struct miscdevice  end_miscdev;
 static DEFINE_MUTEX(end_lock);
 
 /* ------------------------------------------------------------------ */
@@ -131,10 +123,8 @@ static DEFINE_MUTEX(end_lock);
 /* ------------------------------------------------------------------ */
 
 /*
- * end_enter_fault - transition to fault state under end_lock.
- *
- * Sets end_fault, clears end_active, releases cinema_mode coordinator,
- * notifies sysfs waiters on "status".
+ * end_enter_fault - transition to fault state.
+ * Sets end_fault, clears end_active, releases cinema_mode, notifies sysfs.
  * Must be called with end_lock held.
  * Lock ordering: end_lock → cinema_lock; never reversed.
  */
@@ -145,18 +135,11 @@ static void end_enter_fault(const char *reason)
 
 	end_fault  = true;
 	end_active = false;
-
 	cinema_mode_set_active(false);
-
 	pr_warn("cinema_end: fault — %s\n", reason);
 	sysfs_notify(end_kobj, NULL, "status");
 }
 
-/*
- * end_status_str - derive status string from current state.
- * Priority: offline > fault > active > standby.
- * Must be called with end_lock held (or during init before registration).
- */
 static const char *end_status_str(void)
 {
 	if (!end_mcu_online)
@@ -169,69 +152,69 @@ static const char *end_status_str(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* mcu_online                                                           */
+/* /dev/cinema_end miscdev — MCU bridge daemon presence                 */
 /* ------------------------------------------------------------------ */
 
-static ssize_t mcu_online_show(struct kobject *kobj,
-			       struct kobj_attribute *attr, char *buf)
+/*
+ * cinema_end_open - daemon connects; MCU is considered online.
+ *
+ * Exclusive: only one daemon may hold the device at a time.
+ * The OS releases the fd on daemon exit/crash, triggering release().
+ */
+static int cinema_end_open(struct inode *inode, struct file *filp)
 {
-	bool online;
-
-	mutex_lock(&end_lock);
-	online = end_mcu_online;
-	mutex_unlock(&end_lock);
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n", online ? 1 : 0);
-}
-
-static ssize_t mcu_online_store(struct kobject *kobj,
-				struct kobj_attribute *attr,
-				const char *buf, size_t count)
-{
-	bool online;
-
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	if (kstrtobool(buf, &online))
-		return -EINVAL;
-
 	mutex_lock(&end_lock);
 
-	if (online == end_mcu_online)
-		goto out;
-
-	if (!online) {
-		/*
-		 * MCU disconnected.  If recording is active, this is a
-		 * hardware fault — the optical cell lost its drive source.
-		 * If standby, simply go offline.
-		 */
-		if (end_active)
-			end_enter_fault("MCU disconnected during active recording");
-		else if (end_fault)
-			end_fault = false;	/* fault already cleared; go offline */
-
-		end_mcu_online = false;
-	} else {
-		end_mcu_online = true;
-		/* Fault from a previous MCU disconnect is automatically cleared
-		 * when the MCU reconnects and the daemon writes mcu_online=1.
-		 * The operator must still write enable=0 then enable=1 to restart
-		 * recording; fault_clear is not needed in this path.
-		 */
-		if (end_fault && !end_active)
-			end_fault = false;
+	if (end_mcu_online) {
+		mutex_unlock(&end_lock);
+		return -EBUSY;		/* another daemon instance is running */
 	}
 
-	pr_info("cinema_end: MCU %s\n", end_mcu_online ? "online" : "offline");
+	end_mcu_online = true;
+	pr_info("cinema_end: MCU bridge daemon connected (pid %d)\n",
+		task_pid_nr(current));
 	sysfs_notify(end_kobj, NULL, "status");
-	sysfs_notify(end_kobj, NULL, "mcu_online");
 
-out:
 	mutex_unlock(&end_lock);
-	return count;
+	return 0;
 }
+
+/*
+ * cinema_end_release - daemon disconnects or crashes.
+ *
+ * Temperature faults are NOT cleared on reconnect: the LC cell may still
+ * be above threshold when the daemon restarts.  The daemon must write
+ * fault_clear=1 only after MCU telemetry confirms recovery.
+ */
+static int cinema_end_release(struct inode *inode, struct file *filp)
+{
+	mutex_lock(&end_lock);
+
+	end_mcu_online = false;
+
+	if (end_active)
+		end_enter_fault("MCU bridge daemon disconnected during recording");
+
+	pr_info("cinema_end: MCU bridge daemon disconnected\n");
+	sysfs_notify(end_kobj, NULL, "status");
+
+	mutex_unlock(&end_lock);
+	return 0;
+}
+
+static const struct file_operations cinema_end_fops = {
+	.owner   = THIS_MODULE,
+	.open    = cinema_end_open,
+	.release = cinema_end_release,
+	.llseek  = no_llseek,
+};
+
+static struct miscdevice end_miscdev = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name  = "cinema_end",
+	.fops  = &cinema_end_fops,
+	.mode  = 0600,
+};
 
 /* ------------------------------------------------------------------ */
 /* enable                                                               */
@@ -267,15 +250,9 @@ static ssize_t enable_store(struct kobject *kobj,
 	if (on == end_active)
 		goto out;
 
-	if (on) {
-		if (!end_mcu_online) {
-			ret = -ENODEV;
-			goto out;
-		}
-		if (end_fault) {
-			ret = -ENODEV;
-			goto out;
-		}
+	if (on && (!end_mcu_online || end_fault)) {
+		ret = -ENODEV;
+		goto out;
 	}
 
 	end_active = on;
@@ -331,6 +308,11 @@ static ssize_t nd_setpoint_store(struct kobject *kobj,
 	end_nd_setpoint = val;
 	mutex_unlock(&end_lock);
 
+	/*
+	 * Wake the daemon.  A setpoint of 0 means "park/clear" — the daemon
+	 * applies the MCU park sequence; the kernel does not interpret it
+	 * differently at the sysfs level.
+	 */
 	sysfs_notify(end_kobj, NULL, "nd_setpoint");
 	return count;
 }
@@ -443,11 +425,28 @@ static ssize_t cell_temp_store(struct kobject *kobj,
 		return -ERANGE;
 
 	mutex_lock(&end_lock);
-	end_cell_temp = val;
-	if (val > END_TEMP_FAULT_MC && end_active)
-		end_enter_fault("cell temperature exceeded 55°C limit");
-	mutex_unlock(&end_lock);
 
+	end_cell_temp = val;
+
+	if (val > END_TEMP_FAULT_MC && end_active) {
+		end_enter_fault("cell temperature exceeded 65°C hard limit");
+	} else if (val > END_TEMP_WARN_MC && end_active) {
+		/*
+		 * Soft warning: notify userspace via uevent so the camera app
+		 * can alert the operator.  Recording continues.
+		 * sysfs_notify is not used here — status string does not change.
+		 */
+		char *envp[] = { "CINEMA_EVENT=TEMP_WARN", NULL };
+
+		mutex_unlock(&end_lock);
+		kobject_uevent_env(end_kobj, KOBJ_CHANGE, envp);
+		pr_warn_ratelimited("cinema_end: cell temp warning: %d m°C "
+				    "(warn=%d fault=%d)\n",
+				    val, END_TEMP_WARN_MC, END_TEMP_FAULT_MC);
+		return count;
+	}
+
+	mutex_unlock(&end_lock);
 	return count;
 }
 
@@ -512,25 +511,22 @@ static ssize_t fault_clear_store(struct kobject *kobj,
 /* Attribute wiring                                                     */
 /* ------------------------------------------------------------------ */
 
-static struct kobj_attribute mcu_online_attr =
-	__ATTR(mcu_online,   0600, mcu_online_show,   mcu_online_store);
 static struct kobj_attribute enable_attr =
-	__ATTR(enable,       0600, enable_show,        enable_store);
+	__ATTR(enable,       0600, enable_show,      enable_store);
 static struct kobj_attribute nd_setpoint_attr =
-	__ATTR(nd_setpoint,  0600, nd_setpoint_show,   nd_setpoint_store);
+	__ATTR(nd_setpoint,  0600, nd_setpoint_show, nd_setpoint_store);
 static struct kobj_attribute mode_attr =
-	__ATTR(mode,         0600, mode_show,          mode_store);
+	__ATTR(mode,         0600, mode_show,        mode_store);
 static struct kobj_attribute nd_actual_attr =
-	__ATTR(nd_actual,    0600, nd_actual_show,     nd_actual_store);
+	__ATTR(nd_actual,    0600, nd_actual_show,   nd_actual_store);
 static struct kobj_attribute cell_temp_attr =
-	__ATTR(cell_temp,    0600, cell_temp_show,     cell_temp_store);
+	__ATTR(cell_temp,    0600, cell_temp_show,   cell_temp_store);
 static struct kobj_attribute status_attr =
-	__ATTR(status,       0444, status_show,        NULL);
+	__ATTR(status,       0444, status_show,      NULL);
 static struct kobj_attribute fault_clear_attr =
-	__ATTR(fault_clear,  0200, NULL,               fault_clear_store);
+	__ATTR(fault_clear,  0200, NULL,             fault_clear_store);
 
 static struct attribute *end_attrs[] = {
-	&mcu_online_attr.attr,
 	&enable_attr.attr,
 	&nd_setpoint_attr.attr,
 	&mode_attr.attr,
@@ -553,19 +549,33 @@ static int __init cinema_end_init(void)
 {
 	int ret;
 
-	end_kobj = kobject_create_and_add("cinema_end", kernel_kobj);
-	if (!end_kobj)
-		return -ENOMEM;
-
-	ret = sysfs_create_group(end_kobj, &end_attr_group);
+	ret = misc_register(&end_miscdev);
 	if (ret) {
-		kobject_put(end_kobj);
+		pr_err("cinema_end: failed to register miscdev (%d)\n", ret);
 		return ret;
 	}
 
-	pr_info("cinema_end: interface ready (status: offline — awaiting MCU)\n");
-	pr_info("cinema_end:   /sys/kernel/cinema_end/{mcu_online,enable,nd_setpoint,mode,nd_actual,cell_temp,status,fault_clear}\n");
+	end_kobj = kobject_create_and_add("cinema_end", kernel_kobj);
+	if (!end_kobj) {
+		ret = -ENOMEM;
+		goto err_misc;
+	}
+
+	ret = sysfs_create_group(end_kobj, &end_attr_group);
+	if (ret)
+		goto err_kobj;
+
+	pr_info("cinema_end: ready — open /dev/cinema_end to register MCU bridge daemon\n");
+	pr_info("cinema_end:   /sys/kernel/cinema_end/{enable,nd_setpoint,mode,nd_actual,cell_temp,status,fault_clear}\n");
+	pr_info("cinema_end:   temp thresholds: warn=%d m°C fault=%d m°C\n",
+		END_TEMP_WARN_MC, END_TEMP_FAULT_MC);
 	return 0;
+
+err_kobj:
+	kobject_put(end_kobj);
+err_misc:
+	misc_deregister(&end_miscdev);
+	return ret;
 }
 
 static void __exit cinema_end_exit(void)
@@ -579,6 +589,7 @@ static void __exit cinema_end_exit(void)
 
 	sysfs_remove_group(end_kobj, &end_attr_group);
 	kobject_put(end_kobj);
+	misc_deregister(&end_miscdev);
 	pr_info("cinema_end: unloaded\n");
 }
 

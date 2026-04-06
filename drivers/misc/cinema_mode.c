@@ -7,12 +7,23 @@
  * Exposes /sys/kernel/cinema_mode/enable.  Writing "1" activates cinema
  * mode, which:
  *
- *   • Raises every CPUfreq policy's minimum frequency to a recording floor
- *     computed as (cpuinfo.max_freq * floor_pct / 100).  The floor keeps
- *     all clusters fast enough for concurrent ISP/codec/display pipelines
- *     while leaving EAS free to select any OPP at or above the floor.
- *     Pinning to 100% of max_freq would destroy energy-aware scheduling;
- *     the default floor_pct of 85 retains the upper OPP band for EAS.
+ *   • Raises each CPUfreq policy's minimum frequency to a per-cluster
+ *     recording floor.  Floors are tuned for SM8650's four-cluster topology:
+ *
+ *       A520 efficiency (max ≤ 2400 MHz):  50% floor
+ *         — handles background work; ISP never schedules here
+ *       A720 performance (max ≤ 3200 MHz): 75% floor
+ *         — Venus codec and camera HAL threads; needs headroom for bursts
+ *       X4 prime (max > 3200 MHz):         85% floor
+ *         — ISP pre-processing and heaviest single-thread workloads
+ *
+ *     Per-cluster floors preserve EAS within each cluster's unconstrained
+ *     band, and avoid over-constraining the efficiency cores which waste
+ *     power if held at 85% of their already-modest ceiling.
+ *
+ *     The floor_pct module parameter (read-only after insmod) is used as a
+ *     fallback for clusters that do not match the table above, and as the
+ *     single floor for non-SM8650 platforms.
  *
  *   • Requests the system-wide CPU latency QoS to 100 µs — prevents
  *     cluster-power-collapse idle states (C2+, ~150 µs exit latency) that
@@ -26,10 +37,10 @@
  *
  * Module parameter
  * ----------------
- * floor_pct (int, default 85):  percentage of each policy's max_freq used
- * as the FREQ_QOS_MIN recording floor.  Valid range 50–100.  Values below
- * 50 are rejected at activation time; 100 pegs every cluster to its
- * ceiling (equivalent to the original behaviour, but kills EAS).
+ * floor_pct (int, default 85, read-only at runtime): fallback recording floor
+ * as a percentage of max_freq for clusters not matched by the per-cluster
+ * table.  Valid range 50–100.  Set at insmod; cannot be changed at runtime
+ * to prevent a live floor change invalidating freq_floor_hz[] entries.
  *
  * CPU hotplug handling
  * --------------------
@@ -43,12 +54,12 @@
  * Inter-module API
  * ----------------
  * cinema_mode_set_active(bool on) is exported for use by cinema_end.c.
- * Both modules share the same cinema_lock; cinema_end must not call this
- * from a context that already holds the lock.
+ * See drivers/misc/cinema.h.  Must not be called with cinema_lock held.
  *
  * Copyright (c) 2024, Xiaomi Cinema Kernel Project
  */
 
+#include "cinema.h"
 #include <linux/capability.h>
 #include <linux/cpu.h>
 #include <linux/cpufreq.h>
@@ -65,10 +76,40 @@
 /* Module parameters                                                    */
 /* ------------------------------------------------------------------ */
 
+/*
+ * floor_pct: fallback floor percentage for clusters not in the per-cluster
+ * table.  0444 (read-only at runtime) prevents live changes that would
+ * invalidate the freq_floor_hz[] entries stored at activation time.
+ */
 static int floor_pct = 85;
-module_param(floor_pct, int, 0644);
+module_param(floor_pct, int, 0444);
 MODULE_PARM_DESC(floor_pct,
-	"Recording floor as %% of each policy's max_freq (50-100, default 85)");
+	"Fallback recording floor %% of max_freq for unrecognized clusters (50-100, default 85)");
+
+/* ------------------------------------------------------------------ */
+/* Per-cluster floor table                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * cinema_cluster_floor_pct - per-cluster recording floor for SM8650.
+ *
+ * Clusters are identified by their cpuinfo.max_freq.  The efficiency
+ * cluster (A520) is held at a lower floor because ISP workloads never
+ * schedule there; holding it at 85% wastes power without benefit.
+ *
+ * Falls back to the floor_pct module parameter for unrecognized clusters
+ * so this driver works on non-SM8650 platforms without modification.
+ */
+static int cinema_cluster_floor_pct(unsigned int max_freq_khz)
+{
+	if (max_freq_khz <= 2400000)
+		return 50;	/* A520 efficiency — background work only */
+	if (max_freq_khz <= 3200000)
+		return 75;	/* A720 performance — Venus codec / ISP mid-tier */
+	if (max_freq_khz <= 3400000)
+		return 85;	/* X4 prime — heaviest ISP / single-thread load */
+	return floor_pct;	/* fallback for unrecognized topology */
+}
 
 /* ------------------------------------------------------------------ */
 /* Per-CPU state                                                        */
@@ -157,6 +198,7 @@ static int cinema_activate(void)
 	}
 
 	for_each_possible_cpu(cpu) {
+
 		policy = cpufreq_cpu_get(cpu);
 		if (!policy)
 			continue;
@@ -168,10 +210,9 @@ static int cinema_activate(void)
 		}
 
 		/*
-		 * Compute the recording floor for this policy.
-		 * floor_pct < 100 preserves the upper OPP band for EAS;
-		 * the governor may still select higher OPPs based on demand.
-		 * Do-it-in-kernel-integer: no fp, overflow-safe for u32 kHz.
+		 * Per-cluster floor: efficiency cores get a lower percentage
+		 * than performance/prime cores.  All arithmetic is integer,
+		 * overflow-safe for u32 kHz values.
 		 *
 		 * Snap to the nearest OPP at or above the computed floor so
 		 * the FREQ_QOS_MIN value exactly matches a step the DVFS knows
@@ -179,7 +220,8 @@ static int cinema_activate(void)
 		 * tick; an OPP-aligned floor costs nothing extra.
 		 */
 		floor = (unsigned int)(
-			(u64)policy->cpuinfo.max_freq * floor_pct / 100);
+			(u64)policy->cpuinfo.max_freq *
+			cinema_cluster_floor_pct(policy->cpuinfo.max_freq) / 100);
 		floor = cinema_snap_to_opp(policy, floor);
 
 		ret = freq_qos_add_request(&policy->constraints,
@@ -219,8 +261,7 @@ static int cinema_activate(void)
 	 */
 	__pm_stay_awake(cinema_ws);
 
-	pr_info("cinema_mode: active — CPUs floored at %d%% of max, suspend blocked\n",
-		floor_pct);
+	pr_info("cinema_mode: active — per-cluster floors applied, suspend blocked\n");
 	return 0;
 }
 
@@ -315,7 +356,9 @@ static int cinema_cpufreq_notifier(struct notifier_block *nb,
 		 */
 		if (!freq_floor_hz[cpu]) {
 			freq_floor_hz[cpu] = (unsigned int)(
-				(u64)policy->cpuinfo.max_freq * floor_pct / 100);
+				(u64)policy->cpuinfo.max_freq *
+				cinema_cluster_floor_pct(policy->cpuinfo.max_freq)
+				/ 100);
 		}
 
 		ret = freq_qos_add_request(&policy->constraints,

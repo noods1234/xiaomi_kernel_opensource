@@ -1,12 +1,18 @@
 # file_contexts — cinema mode vendor file labels
 # Merged into the vendor sepolicy at build time.
-#
-# Without these entries the cinema shell scripts carry the default
-# vendor_file label.  The cinema_io_tune domain's exec-type transition
-# requires the scripts to be labeled cinema_io_tune_exec, otherwise
-# the SELinux domain transition does not fire and the services either
-# fail to start or run in the wrong domain.
 
+# cinema_io_tune shell scripts
 /vendor/bin/cinema_io_tune\.sh      u:object_r:cinema_io_tune_exec:s0
 /vendor/bin/cinema_on_apply\.sh     u:object_r:cinema_io_tune_exec:s0
 /vendor/bin/cinema_off_apply\.sh    u:object_r:cinema_io_tune_exec:s0
+
+# cinema_end_daemon binary.  Without this entry the binary carries the
+# default vendor_file label and the SELinux domain transition to
+# cinema_end_daemon never fires — the daemon would run in the parent
+# domain with that domain's full capabilities instead of the scoped
+# cinema_end_daemon grants.
+/vendor/bin/cinema_end_daemon       u:object_r:cinema_end_daemon_exec:s0
+
+# /dev/cinema_end miscdev node created by the kernel when cinema_end.ko
+# loads.  ueventd applies the label on UEVENT_ADD.
+/dev/cinema_end                     u:object_r:cinema_end_device:s0

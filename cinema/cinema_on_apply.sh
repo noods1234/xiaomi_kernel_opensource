@@ -18,9 +18,6 @@ if grep -q zram0 /proc/swaps; then
     fi
 fi
 
-# Drop page cache to reclaim RAM for DMA capture buffers.
-echo 3 > /proc/sys/vm/drop_caches
-
 # Lower vm.swappiness further during recording — keep capture buffers hot.
 echo 5 > /proc/sys/vm/swappiness
 

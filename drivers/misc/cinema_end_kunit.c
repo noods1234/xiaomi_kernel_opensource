@@ -43,7 +43,8 @@
 #define END_MODE_EXPOSURE_HOLD	1
 #define END_MODE_DOF_HOLD	2
 #define END_MODE_MAX		END_MODE_DOF_HOLD
-#define END_TEMP_FAULT_MC	55000
+#define END_TEMP_WARN_MC	55000	/* soft warning — recording continues */
+#define END_TEMP_FAULT_MC	65000	/* hard fault — 5°C below 70°C rating */
 
 /*
  * end_test_nd_valid - replicate nd_setpoint_store / nd_actual_store range check.
@@ -72,8 +73,17 @@ static bool end_test_temp_valid(int val)
 }
 
 /*
- * end_test_temp_fault - replicate the fault threshold comparison in
- * cell_temp_store: fault fires when val > END_TEMP_FAULT_MC.
+ * end_test_temp_warn - replicate the soft warning comparison:
+ * fires when val > END_TEMP_WARN_MC and val <= END_TEMP_FAULT_MC.
+ */
+static bool end_test_temp_warn(int val)
+{
+	return val > END_TEMP_WARN_MC && val <= END_TEMP_FAULT_MC;
+}
+
+/*
+ * end_test_temp_fault - replicate the hard fault comparison:
+ * fires when val > END_TEMP_FAULT_MC.
  */
 static bool end_test_temp_fault(int val)
 {
@@ -187,34 +197,44 @@ static void end_test_cell_temp_range(struct kunit *test)
 }
 
 /* ------------------------------------------------------------------ */
-/* Test 4: temperature fault threshold                                   */
+/* Test 4: two-tier temperature thresholds                              */
 /* ------------------------------------------------------------------ */
 
 /*
- * end_test_temp_fault_threshold - validate the fault comparison.
+ * end_test_temp_thresholds - validate the warn and fault comparisons.
  *
- * Fault fires when cell_temp > END_TEMP_FAULT_MC (55 000 m°C).
- * Exactly at the threshold is NOT a fault — the spec says "exceeds".
+ * WARN fires when val > END_TEMP_WARN_MC (55°C) and <= END_TEMP_FAULT_MC (65°C).
+ * FAULT fires when val > END_TEMP_FAULT_MC (65°C).
+ * Neither fires at exactly the threshold — both are strictly greater-than.
  *
- * This is the comparison most likely to have an off-by-one error
- * (> vs >= vs <=), so boundary cases are tested explicitly.
+ * The boundary between warn and fault (65°C) is the most likely source
+ * of off-by-one errors, so it is tested on both sides explicitly.
  */
-static void end_test_temp_fault_threshold(struct kunit *test)
+static void end_test_temp_thresholds(struct kunit *test)
 {
-	/* Confirm the threshold value — if this fails, END_TEMP_FAULT_MC changed */
-	KUNIT_EXPECT_EQ(test, END_TEMP_FAULT_MC, 55000);
+	/* Confirm threshold values — if these fail, constants diverged */
+	KUNIT_EXPECT_EQ(test, END_TEMP_WARN_MC,  55000);
+	KUNIT_EXPECT_EQ(test, END_TEMP_FAULT_MC, 65000);
 
-	/* Below threshold: no fault */
+	/* Below warn: neither fires */
+	KUNIT_EXPECT_FALSE(test, end_test_temp_warn(0));
 	KUNIT_EXPECT_FALSE(test, end_test_temp_fault(0));
-	KUNIT_EXPECT_FALSE(test, end_test_temp_fault(25000));
-	KUNIT_EXPECT_FALSE(test, end_test_temp_fault(54999));
+	KUNIT_EXPECT_FALSE(test, end_test_temp_warn(25000));
+	KUNIT_EXPECT_FALSE(test, end_test_temp_warn(END_TEMP_WARN_MC));
+	KUNIT_EXPECT_FALSE(test, end_test_temp_fault(END_TEMP_WARN_MC));
 
-	/* Exactly at threshold: NOT a fault (strictly greater-than) */
+	/* In the warn band (55°C < val ≤ 65°C): warn fires, fault does not */
+	KUNIT_EXPECT_TRUE(test,  end_test_temp_warn(END_TEMP_WARN_MC + 1));
+	KUNIT_EXPECT_FALSE(test, end_test_temp_fault(END_TEMP_WARN_MC + 1));
+	KUNIT_EXPECT_TRUE(test,  end_test_temp_warn(60000));
+	KUNIT_EXPECT_FALSE(test, end_test_temp_fault(60000));
+	KUNIT_EXPECT_TRUE(test,  end_test_temp_warn(END_TEMP_FAULT_MC));
 	KUNIT_EXPECT_FALSE(test, end_test_temp_fault(END_TEMP_FAULT_MC));
 
-	/* One above threshold: fault */
+	/* Above fault threshold (val > 65°C): fault fires, warn does not */
+	KUNIT_EXPECT_FALSE(test, end_test_temp_warn(END_TEMP_FAULT_MC + 1));
 	KUNIT_EXPECT_TRUE(test,  end_test_temp_fault(END_TEMP_FAULT_MC + 1));
-	KUNIT_EXPECT_TRUE(test,  end_test_temp_fault(55001));
+	KUNIT_EXPECT_FALSE(test, end_test_temp_warn(80000));
 	KUNIT_EXPECT_TRUE(test,  end_test_temp_fault(80000));
 	KUNIT_EXPECT_TRUE(test,  end_test_temp_fault(125000));
 }
@@ -502,8 +522,11 @@ static void end_test_constant_consistency(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, END_MODE_DOF_HOLD,      2);
 	KUNIT_EXPECT_EQ(test, END_MODE_MAX,           2);
 
-	/* 55°C thermal limit for LC-Tec cartridge */
-	KUNIT_EXPECT_EQ(test, END_TEMP_FAULT_MC, 55000);
+	/* LC-Tec cartridge rated to 70°C; 55°C warn, 65°C fault (5°C margin) */
+	KUNIT_EXPECT_EQ(test, END_TEMP_WARN_MC,  55000);
+	KUNIT_EXPECT_EQ(test, END_TEMP_FAULT_MC, 65000);
+	/* Warn must be strictly below fault */
+	KUNIT_EXPECT_LT(test, END_TEMP_WARN_MC, END_TEMP_FAULT_MC);
 }
 
 /* ------------------------------------------------------------------ */
@@ -514,7 +537,7 @@ static struct kunit_case cinema_end_test_cases[] = {
 	KUNIT_CASE(end_test_nd_range),
 	KUNIT_CASE(end_test_mode_range),
 	KUNIT_CASE(end_test_cell_temp_range),
-	KUNIT_CASE(end_test_temp_fault_threshold),
+	KUNIT_CASE(end_test_temp_thresholds),
 	KUNIT_CASE(end_test_status_string),
 	KUNIT_CASE(end_test_enable_parsing),
 	KUNIT_CASE(end_test_nd_setpoint_format),

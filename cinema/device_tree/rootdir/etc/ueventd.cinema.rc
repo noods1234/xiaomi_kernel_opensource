@@ -19,18 +19,24 @@
 # Owner system:system so no privilege escalation required from init.
 /sys/kernel/cinema_mode/enable      0644  system  system
 
-# cinema_end: control nodes written by system_server or the MCU daemon.
-# The daemon and system_server run as system uid; using system:system
-# means they can write without CAP_DAC_OVERRIDE.
-# The kernel driver still enforces CAP_SYS_ADMIN as a second gate.
-/sys/kernel/cinema_end/mcu_online   0660  system  system
+# /dev/cinema_end miscdev — exclusive open by the MCU bridge daemon.
+# 0600 root:root: only the daemon (which runs as root or with CAP_SYS_ADMIN)
+# may open it.  The fd lifecycle signals MCU presence to the kernel;
+# closing it (including on crash) triggers the kernel offline transition.
+/dev/cinema_end                     0600  root    root
+
+# cinema_end sysfs — app-rw nodes (enable, nd_setpoint, mode).
+# Written by system_server / cameraserver on behalf of the camera app.
 /sys/kernel/cinema_end/enable       0660  system  system
 /sys/kernel/cinema_end/nd_setpoint  0660  system  system
 /sys/kernel/cinema_end/mode         0660  system  system
-/sys/kernel/cinema_end/fault_clear  0220  system  system
 
-# Telemetry nodes: daemon writes, apps read.
-# 0664: system:system owns write; camera app (in group camera) can read.
-/sys/kernel/cinema_end/nd_actual    0664  system  camera
-/sys/kernel/cinema_end/cell_temp    0664  system  camera
+# cinema_end sysfs — daemon-rw nodes (nd_actual, cell_temp, fault_clear).
+# Written exclusively by the MCU bridge daemon; camera app reads only.
+# 0640: system owns write; camera group can read.
+/sys/kernel/cinema_end/nd_actual    0640  system  camera
+/sys/kernel/cinema_end/cell_temp    0640  system  camera
+/sys/kernel/cinema_end/fault_clear  0200  system  system
+
+# cinema_end sysfs — read-only status for all cinema actors.
 /sys/kernel/cinema_end/status       0444  system  system

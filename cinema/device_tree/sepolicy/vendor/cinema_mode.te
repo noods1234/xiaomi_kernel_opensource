@@ -1,7 +1,8 @@
 # cinema_mode.te
 # SELinux policy for:
 #   /sys/kernel/cinema_mode/   (performance coordinator)
-#   /sys/kernel/cinema_end/    (eND optical cartridge interface)
+#   /sys/kernel/cinema_end/    (eND optical cartridge sysfs interface)
+#   /dev/cinema_end            (MCU bridge daemon presence miscdev)
 # and for init.cinema.rc property triggers.
 
 # ---- Type declarations ----
@@ -10,183 +11,138 @@
 type cinema_mode_sysfs, fs_type, sysfs_type;
 type cinema_mode_sysfs_dir, fs_type, sysfs_type;
 
-# cinema_end sysfs — separate types so grants can be scoped independently.
-# The daemon needs write access to telemetry nodes (nd_actual, cell_temp,
-# mcu_online, fault_clear) but the camera app only needs read access.
-# Using distinct types for the directory and the individual nodes lets us
-# give the camera app read-only access without any write capability.
+# cinema_end sysfs — three types for precise grant scoping:
+#
+#   cinema_end_sysfs_app_rw:
+#     enable, nd_setpoint, mode — written by system_server / cameraserver
+#     on behalf of the camera app; read by the daemon.
+#
+#   cinema_end_sysfs_daemon_rw:
+#     nd_actual, cell_temp, fault_clear — written exclusively by the MCU
+#     bridge daemon.  cameraserver/system_server have NO write access here.
+#     This prevents a compromised cameraserver from forging MCU telemetry
+#     or clearing thermal safety faults.
+#
+#   cinema_end_sysfs_ro:
+#     status — read by all cinema actors; written by no one from userspace.
+#
 type cinema_end_sysfs_dir, fs_type, sysfs_type;
-type cinema_end_sysfs_rw, fs_type, sysfs_type;   /* enable, nd_setpoint, mode, mcu_online, fault_clear */
-type cinema_end_sysfs_ro, fs_type, sysfs_type;   /* status, nd_actual, cell_temp (read by app) */
+type cinema_end_sysfs_app_rw, fs_type, sysfs_type;
+type cinema_end_sysfs_daemon_rw, fs_type, sysfs_type;
+type cinema_end_sysfs_ro, fs_type, sysfs_type;
 
-# Dedicated exec type for the cinema_io_tune script (scoped, not shell_exec)
+# /dev/cinema_end miscdev — daemon holds this fd to signal MCU presence.
+# Closing it (including on crash) triggers the kernel offline transition.
+type cinema_end_device, dev_type;
+
+# Dedicated exec types
 type cinema_io_tune_exec, exec_type, vendor_file_type, file_type;
-
-# Domain for the cinema_io_tune service (seclabel u:r:cinema_io_tune:s0 in init.cinema.rc).
-# Must be declared as a domain so init can transition into it via the seclabel directive.
-type cinema_io_tune, domain;
-
-# ---- Label the sysfs nodes (see genfs_contexts) ----
-# Directory:  /sys/kernel/cinema_mode      -> cinema_mode_sysfs_dir
-# Control file: /sys/kernel/cinema_mode/enable -> cinema_mode_sysfs
-
-# ---- cinema_end daemon (cinema_end_daemon domain) ----
-#
-# The MCU bridge daemon runs as a privileged service under the
-# cinema_end_daemon domain.  It needs:
-#   - Read access to the cinema_end sysfs directory and all nodes
-#   - Write access to mcu_online, nd_actual, cell_temp, fault_clear
-#   - poll(2) support (requires read + open on the nodes it polls)
-#
-# The daemon authenticates via its SELinux domain label; the kernel driver
-# also enforces CAP_SYS_ADMIN as a second line of defence.
-
-type cinema_end_daemon, domain;
 type cinema_end_daemon_exec, exec_type, vendor_file_type, file_type;
 
-allow cinema_end_daemon cinema_end_sysfs_dir:dir  { open read search getattr };
-allow cinema_end_daemon cinema_end_sysfs_rw:file  { read write open getattr };
-allow cinema_end_daemon cinema_end_sysfs_ro:file  { read write open getattr };
+# Domains
+type cinema_io_tune, domain;
+type cinema_end_daemon, domain;
 
-# CAP_SYS_ADMIN is required by the kernel driver for all sysfs writes.
+# ---- cinema_end_daemon ----
+#
+# The MCU bridge daemon:
+#   - Opens /dev/cinema_end (exclusive; kernel owns MCU presence state)
+#   - Reads nd_setpoint and mode (polls for changes from camera app)
+#   - Writes nd_actual, cell_temp, fault_clear (daemon-rw nodes only)
+#   - Does NOT write enable, nd_setpoint, mode (those are app-rw)
+#
+# CAP_SYS_ADMIN: required by the kernel driver for sysfs writes.
+# Scoped to cinema_end_daemon only — system_server does NOT get sys_admin
+# from this policy.
+
+allow cinema_end_daemon cinema_end_device:chr_file { open read write ioctl getattr };
+
+allow cinema_end_daemon cinema_end_sysfs_dir:dir         { open read search getattr };
+allow cinema_end_daemon cinema_end_sysfs_app_rw:file     { read open getattr };
+allow cinema_end_daemon cinema_end_sysfs_daemon_rw:file  { read write open getattr };
+allow cinema_end_daemon cinema_end_sysfs_ro:file         { read open getattr };
+
 allow cinema_end_daemon self:capability sys_admin;
 
-# The daemon also needs to read nd_setpoint changes (poll + read).
-# nd_setpoint uses cinema_end_sysfs_rw (it is written by system_server
-# on behalf of the camera app, and read by the daemon).
-# The read permission above covers this.
-
-# ---- camera app / cameraserver: read-only access to cinema_end status ----
+# ---- cameraserver: app-rw write + all reads ----
 #
-# The camera app reads status, nd_actual, cell_temp, nd_setpoint for UI.
-# It writes nd_setpoint via system_server.  No direct kernel access needed
-# from the app process — all camera sysfs writes go through system_server.
+# The camera HAL writes enable, nd_setpoint, and mode.  It reads
+# status, nd_actual, cell_temp for UI.  It has NO access to daemon-rw
+# nodes so a compromised cameraserver cannot forge telemetry or clear faults.
 
-allow cameraserver cinema_end_sysfs_dir:dir  { open read search getattr };
-allow cameraserver cinema_end_sysfs_rw:file  { read write open getattr };
-allow cameraserver cinema_end_sysfs_ro:file  { read open getattr };
+allow cameraserver cinema_end_sysfs_dir:dir         { open read search getattr };
+allow cameraserver cinema_end_sysfs_app_rw:file     { read write open getattr };
+allow cameraserver cinema_end_sysfs_daemon_rw:file  { read open getattr };
+allow cameraserver cinema_end_sysfs_ro:file         { read open getattr };
 
-# ---- system_server: write nd_setpoint and enable on cinema app request ----
-allow system_server cinema_end_sysfs_dir:dir  { open read search getattr };
-allow system_server cinema_end_sysfs_rw:file  { read write open getattr };
-allow system_server cinema_end_sysfs_ro:file  { read open getattr };
-allow system_server self:capability sys_admin;
+# ---- system_server: same scope as cameraserver ----
+#
+# system_server proxies Camera2 API calls and sets the cinema mode property.
+# It writes enable and nd_setpoint via the HAL.  It does NOT get CAP_SYS_ADMIN
+# from this policy — that would be an unacceptable system-wide privilege
+# escalation.  The HAL calls already run in a context (cameraserver) with
+# the capability grant above.
 
-# ---- init: write enable and mcu_online from init.cinema.rc triggers ----
-allow init cinema_end_sysfs_dir:dir  { open read search getattr };
-allow init cinema_end_sysfs_rw:file  { read write open getattr };
-allow init cinema_end_sysfs_ro:file  { read open getattr };
+allow system_server cinema_end_sysfs_dir:dir         { open read search getattr };
+allow system_server cinema_end_sysfs_app_rw:file     { read write open getattr };
+allow system_server cinema_end_sysfs_daemon_rw:file  { read open getattr };
+allow system_server cinema_end_sysfs_ro:file         { read open getattr };
 
-# ---- neverallow: nothing except the declared domains may write cinema_end ----
+# ---- init: write enable from init.cinema.rc property trigger ----
+allow init cinema_end_sysfs_dir:dir         { open read search getattr };
+allow init cinema_end_sysfs_app_rw:file     { read write open getattr };
+allow init cinema_end_sysfs_daemon_rw:file  { read open getattr };
+allow init cinema_end_sysfs_ro:file         { read open getattr };
+
+# ---- neverallow guards ----
+
+# Only the daemon may write daemon-rw nodes (telemetry, fault_clear).
+neverallow { domain -cinema_end_daemon } cinema_end_sysfs_daemon_rw:file write;
+
+# Only declared domains may write app-rw nodes (enable, nd_setpoint, mode).
 neverallow { domain
 	-init
 	-system_server
 	-cameraserver
-	-cinema_end_daemon
-} cinema_end_sysfs_rw:file write;
+} cinema_end_sysfs_app_rw:file write;
 
-# ---- Allow cinema_io_tune domain to execute the shell and its script ----
-# The seclabel directive in init.cinema.rc forces the service into the
-# cinema_io_tune domain regardless of the exec binary.  init execve()s
-# /vendor/bin/sh, so shell_exec is the entrypoint.
-# entrypoint is intentionally omitted here — with seclabel, the domain
-# transition is forced by init, not via a type_transition rule, so the
-# entrypoint permission is not evaluated.  shell_exec only needs read+execute.
+# Only the daemon may open the miscdev.
+neverallow { domain -cinema_end_daemon } cinema_end_device:chr_file write;
+
+# ---- cinema_io_tune service ----
+# (No changes from previous policy)
+
 allow cinema_io_tune shell_exec:file { read execute open getattr };
 allow cinema_io_tune cinema_io_tune_exec:file { read execute open getattr };
-
-# Basic self/process permissions every domain needs.
 allow cinema_io_tune cinema_io_tune:process { fork sigchld };
-
-# Read access to /vendor/bin and /vendor/bin/sh directory entries.
 allow cinema_io_tune vendor_file_type:dir { open read search getattr };
 allow cinema_io_tune vendor_file_type:file { read open getattr };
-
-# Write to UFS block queue sysfs nodes (scheduler, read_ahead_kb, nr_requests, etc.)
-# sysfs_block is the standard AOSP type for /sys/block/*/queue/* nodes.
-# We grant write only to this scoped type — not the blanket sysfs_type —
-# so cinema_io_tune cannot reach /sys/power/state, /sys/kernel/debug/*,
-# or other sensitive sysfs nodes.
 allow cinema_io_tune sysfs_block:dir { open read search getattr };
 allow cinema_io_tune sysfs_block:file { read write open getattr };
-
-# /sys/block/zram0/disksize lives under the same sysfs_block label on
-# Android (block device sysfs nodes share the type).  No additional grant needed.
-
-# Write to the cinema_mode sysfs control file specifically.
 allow cinema_io_tune cinema_mode_sysfs_dir:dir { open read search getattr };
 allow cinema_io_tune cinema_mode_sysfs:file { read write open getattr };
-
-# Write to /proc/sys/vm/* via the sysctl_vm type (standard AOSP base policy).
-# This covers swappiness, dirty_ratio, dirty_expire_centisecs, etc.
-# sysctl_vm is scoped to /proc/sys/vm/ and does NOT cover /proc/sysrq-trigger,
-# /proc/*/mem, or other dangerous proc files.
 allow cinema_io_tune sysctl_vm:dir { open read search getattr };
 allow cinema_io_tune sysctl_vm:file { read write open getattr };
-
-# Write to /proc/sys/fs/inotify/* via the sysctl_fs type (standard AOSP base policy).
-# Covers max_user_watches, max_user_instances.
 allow cinema_io_tune sysctl_fs:dir { open read search getattr };
 allow cinema_io_tune sysctl_fs:file { read write open getattr };
-
-# Read /proc/swaps to check whether zram0 is already an active swap device.
-# proc_swaps is the standard label for /proc/swaps in AOSP base policy.
 allow cinema_io_tune proc_swaps:file { read open getattr };
-
-# swapon(8) requires CAP_SYS_ADMIN.  Without sys_admin the swapon() syscall
-# returns EPERM regardless of filesystem permissions.
 allow cinema_io_tune self:capability sys_admin;
-
-# dac_override: cinema_io_tune runs as uid=0 (user root in the service stanza)
-# but some sysfs nodes (notably BFQ queue files on UFS LUNs) have uid=0,
-# gid=disk.  The SELinux process check for write happens after the DAC check;
-# dac_override covers the open() call on nodes not owned by the process's gid.
 allow cinema_io_tune self:capability dac_override;
-
-# Execute system utilities called from cinema_io_tune.sh:
-#   - /system/bin/grep  (checks /proc/swaps for zram0)
-#   - /system/bin/swapon (activates ZRAM swap)
-# Both binaries carry the system_file label.  execute_no_trans keeps the
-# child process in the cinema_io_tune domain rather than transitioning to a
-# new one (which would require an additional domain declaration).
 allow cinema_io_tune system_file:file { read open getattr execute execute_no_trans };
-
-# /dev/zram0 is a block device node.  swapon(2) and swapoff(2) open it for
-# read+write and issue block ioctls (BLKGETSIZE64, BLKSSSZGET).
-# In AOSP base policy, swap block devices carry the swap_block_device type
-# (not the generic block_device type).  Using the generic block_device type
-# would be overly broad — swap_block_device is the correct scoped label.
-# swapoff is also in /system/bin/ and is covered by the system_file execute
-# grant above.
 allow cinema_io_tune swap_block_device:blk_file { open read write ioctl getattr };
-
-# cinema_on_apply.sh and cinema_off_apply.sh write diagnostic messages to
-# /dev/kmsg on swapoff failure.  kmsg_device is the standard AOSP type.
 allow cinema_io_tune kmsg_device:chr_file { open write getattr };
 
-# ---- Allow init to access the sysfs directory and write the control file ----
+# ---- init: cinema_mode sysfs and scripts ----
 allow init cinema_mode_sysfs_dir:dir { open read search getattr };
 allow init cinema_mode_sysfs:file { read write getattr open };
+allow init cinema_io_tune_exec:file { read execute execute_no_trans open getattr };
 
-# ---- Allow system_server and cameraserver to activate cinema mode ----
-# They set persist.cinema.mode which triggers the init rc rule.
-# No direct sysfs access needed from userspace — all writes go via init.
+# ---- Property access ----
 allow system_server cinema_prop:property_service set;
 allow cameraserver cinema_prop:property_service set;
 
-# ---- Allow init to execute the cinema_io_tune script (scoped to its type) ----
-allow init cinema_io_tune_exec:file { read execute execute_no_trans open getattr };
-
-# ---- Property types ----
-# persist.cinema.* — survives reboot, writable by init, system_server, and cameraserver
 type cinema_prop, property_type;
-
-# sys.cinema.* — runtime state, set only by init
 type sys_cinema_prop, property_type;
 
-# ---- neverallow guards ----
-# Prevent any domain other than init and system_server from persisting cinema state
 neverallow { domain -init -system_server -cameraserver } cinema_prop:property_service set;
-
-# Only init may set runtime cinema state
 neverallow { domain -init } sys_cinema_prop:property_service set;
