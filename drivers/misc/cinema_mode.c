@@ -152,10 +152,10 @@ static DEFINE_MUTEX(cinema_lock);
  * eliminates that overhead.
  *
  * Iterates policy->freq_table (set by the platform cpufreq driver) for
- * the lowest entry >= target_khz.  Falls back to target_khz itself if
- * the table is absent (e.g. FAKE_SM8650_CPUFREQ under QEMU) or if no
- * entry is >= target_khz (impossible when target_khz <= max_freq, but
- * guarded defensively).
+ * the lowest entry >= target_khz.  Falls back to target_khz itself when
+ * the freq_table is absent (e.g. FAKE_SM8650_CPUFREQ under QEMU).  When no
+ * entry satisfies the >= predicate (impossible in practice since
+ * target_khz <= max_freq), best retains its initial value of max_freq.
  *
  * Must be called with a policy reference held (cpufreq_cpu_get).
  */
@@ -404,6 +404,28 @@ int cinema_mode_set_active(bool on)
 {
 	int ret = 0;
 
+	/*
+	 * Acquire cpu_hotplug_lock (read) BEFORE cinema_lock to prevent an
+	 * ABBA deadlock with the cpufreq policy notifier.
+	 *
+	 * The deadlock scenario without this guard:
+	 *
+	 *   Thread A (sysfs write, this path):
+	 *     cinema_lock → cpufreq_cpu_get() → cpufreq_rwsem (read)
+	 *
+	 *   Thread B (hotplug thread, cpufreq_online/offline):
+	 *     cpufreq_rwsem (write, dispatching CPUFREQ_CREATE/REMOVE_POLICY)
+	 *     → blocking_notifier_call_chain → cinema_cpufreq_notifier
+	 *     → cinema_lock
+	 *
+	 * cpus_read_lock() takes cpu_hotplug_lock for read, which is mutually
+	 * exclusive with the write side held by the hotplug thread.  The
+	 * notifier therefore cannot run while we hold the read lock, breaking
+	 * the cycle.  Lock order is now:
+	 *   cpu_hotplug_lock (read) → cinema_lock → cpufreq_rwsem (read)
+	 * which is consistent with the hotplug path's write side.
+	 */
+	cpus_read_lock();
 	mutex_lock(&cinema_lock);
 
 	if (on == cinema_active)
@@ -421,6 +443,7 @@ int cinema_mode_set_active(bool on)
 
 out:
 	mutex_unlock(&cinema_lock);
+	cpus_read_unlock();
 	return ret;
 }
 EXPORT_SYMBOL_GPL(cinema_mode_set_active);
@@ -587,6 +610,6 @@ static void __exit cinema_mode_exit(void)
 module_init(cinema_mode_init);
 module_exit(cinema_mode_exit);
 
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Cinema recording performance coordinator for Xiaomi 14 Ultra");
 MODULE_AUTHOR("Xiaomi Cinema Kernel Project");

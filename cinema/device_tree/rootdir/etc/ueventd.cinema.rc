@@ -1,23 +1,24 @@
 # ueventd.cinema.rc
-# Ownership and permissions for cinema_mode sysfs node.
+# Node ownership and permissions for the cinema subsystem:
+#   /sys/kernel/cinema_mode/  — CPU/latency performance coordinator
+#   /sys/kernel/cinema_end/   — eND optical cartridge sysfs interface
+#   /dev/cinema_end           — MCU bridge daemon presence miscdev
 #
 # Drop into device/xiaomi/aurora/ and add to BoardConfig.mk:
 #   TARGET_UEVENTD_RC_FILES += device/xiaomi/aurora/ueventd.cinema.rc
 #
 # ueventd processes UEVENT_ADD notifications from the kernel and applies
-# these rules every time the sysfs node appears — including after
-# cinema_mode.ko is unloaded and reloaded (e.g. during testing or
-# firmware update).
-#
-# init.rc "on boot" chown fires only once per boot and is lost after
-# rmmod/insmod.  ueventd is the correct Android mechanism for dynamic
-# sysfs node ownership.
+# these rules every time a sysfs node appears — including after
+# cinema_mode.ko / cinema_end.ko are unloaded and reloaded (testing,
+# firmware updates).  An init.rc "on boot" chown fires only once per boot
+# and is lost after rmmod/insmod; ueventd is the correct mechanism.
 #
 # Format: <path>  <permissions>  <owner>  <group>
 
-# cinema_mode: written by init on persist.cinema.mode property change.
-# Owner system:system so no privilege escalation required from init.
-/sys/kernel/cinema_mode/enable      0644  system  system
+# cinema_mode: the kernel attribute is defined 0600 (owner-rw).
+# init writes this node on persist.cinema.mode property change; init runs
+# as root (uid 0) and requires no permission relaxation.  Match kernel.
+/sys/kernel/cinema_mode/enable      0600  root    root
 
 # /dev/cinema_end miscdev — exclusive open by the MCU bridge daemon.
 # 0600 root:root: only the daemon (which runs as root or with CAP_SYS_ADMIN)

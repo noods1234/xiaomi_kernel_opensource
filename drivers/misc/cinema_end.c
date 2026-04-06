@@ -115,7 +115,6 @@ static int  end_nd_actual;
 static int  end_cell_temp;
 
 static struct kobject    *end_kobj;
-static struct miscdevice  end_miscdev;
 static DEFINE_MUTEX(end_lock);
 
 /* ------------------------------------------------------------------ */
@@ -192,10 +191,12 @@ static int cinema_end_release(struct inode *inode, struct file *filp)
 
 	end_mcu_online = false;
 
-	if (end_active)
+	if (end_active) {
+		/* end_enter_fault() logs the disconnect reason as pr_warn */
 		end_enter_fault("MCU bridge daemon disconnected during recording");
-
-	pr_info("cinema_end: MCU bridge daemon disconnected\n");
+	} else {
+		pr_info("cinema_end: MCU bridge daemon disconnected\n");
+	}
 	sysfs_notify(end_kobj, NULL, "status");
 
 	mutex_unlock(&end_lock);
@@ -255,15 +256,19 @@ static ssize_t enable_store(struct kobject *kobj,
 		goto out;
 	}
 
+	/*
+	 * Activate the performance coordinator BEFORE setting end_active so
+	 * that concurrent status_show() callers never see "active" with the
+	 * coordinator not yet running.  On deactivation, cinema_deactivate()
+	 * is void (always succeeds), so the order is safe in both directions.
+	 */
+	ret = cinema_mode_set_active(on);
+	if (ret)
+		goto out;
+
 	end_active = on;
 	if (!on)
 		end_fault = false;
-
-	ret = cinema_mode_set_active(on);
-	if (ret && on) {
-		end_active = false;
-		goto out;
-	}
 
 	pr_debug("cinema_end: eND %s\n", on ? "active" : "standby");
 	sysfs_notify(end_kobj, NULL, "status");
@@ -549,21 +554,27 @@ static int __init cinema_end_init(void)
 {
 	int ret;
 
-	ret = misc_register(&end_miscdev);
-	if (ret) {
-		pr_err("cinema_end: failed to register miscdev (%d)\n", ret);
-		return ret;
-	}
-
+	/*
+	 * Create the kobject and sysfs group BEFORE registering the miscdev.
+	 *
+	 * If misc_register() ran first, a daemon could open /dev/cinema_end
+	 * before end_kobj is initialised.  cinema_end_open() calls
+	 * sysfs_notify(end_kobj, ...) — sysfs_notify(NULL, ...) is a NULL
+	 * dereference and panics the kernel.
+	 */
 	end_kobj = kobject_create_and_add("cinema_end", kernel_kobj);
-	if (!end_kobj) {
-		ret = -ENOMEM;
-		goto err_misc;
-	}
+	if (!end_kobj)
+		return -ENOMEM;
 
 	ret = sysfs_create_group(end_kobj, &end_attr_group);
 	if (ret)
 		goto err_kobj;
+
+	ret = misc_register(&end_miscdev);
+	if (ret) {
+		pr_err("cinema_end: failed to register miscdev (%d)\n", ret);
+		goto err_sysfs;
+	}
 
 	pr_info("cinema_end: ready — open /dev/cinema_end to register MCU bridge daemon\n");
 	pr_info("cinema_end:   /sys/kernel/cinema_end/{enable,nd_setpoint,mode,nd_actual,cell_temp,status,fault_clear}\n");
@@ -571,10 +582,10 @@ static int __init cinema_end_init(void)
 		END_TEMP_WARN_MC, END_TEMP_FAULT_MC);
 	return 0;
 
+err_sysfs:
+	sysfs_remove_group(end_kobj, &end_attr_group);
 err_kobj:
 	kobject_put(end_kobj);
-err_misc:
-	misc_deregister(&end_miscdev);
 	return ret;
 }
 
@@ -587,16 +598,26 @@ static void __exit cinema_end_exit(void)
 	}
 	mutex_unlock(&end_lock);
 
+	/*
+	 * Deregister the miscdev BEFORE releasing the kobject.
+	 *
+	 * If kobject_put() ran first and the module is force-unloaded with the
+	 * daemon fd still open, a subsequent cinema_end_release() would call
+	 * sysfs_notify(end_kobj, ...) on freed memory.  Deregistering first
+	 * prevents new opens; the module refcount (via THIS_MODULE in fops)
+	 * ensures the module body stays mapped until all existing fds are closed,
+	 * at which point release() has already been called before we get here.
+	 */
+	misc_deregister(&end_miscdev);
 	sysfs_remove_group(end_kobj, &end_attr_group);
 	kobject_put(end_kobj);
-	misc_deregister(&end_miscdev);
 	pr_info("cinema_end: unloaded\n");
 }
 
 module_init(cinema_end_init);
 module_exit(cinema_end_exit);
 
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Electronic neutral density (eND) control interface for Xiaomi 14 Ultra");
 MODULE_AUTHOR("Xiaomi Cinema Kernel Project");
 MODULE_SOFTDEP("pre: cinema_mode");

@@ -127,7 +127,17 @@ allow cinema_io_tune sysctl_fs:dir { open read search getattr };
 allow cinema_io_tune sysctl_fs:file { read write open getattr };
 allow cinema_io_tune proc_swaps:file { read open getattr };
 allow cinema_io_tune self:capability sys_admin;
-allow cinema_io_tune self:capability dac_override;
+# dac_override removed: no script path requires bypassing DAC checks.
+# The sysfs/procfs nodes written by the scripts are owned system:system
+# (ueventd) or root:root (procfs), and cinema_io_tune runs as root with
+# sys_admin — DAC override is unnecessary and was masking a missing grant.
+
+# GPU (Adreno 750 / kgsl-3d0) sysfs nodes written by cinema_on_apply.sh:
+#   force_no_nap — prevent idle power collapse between recording frames
+#   idle_timer   — set to 0 during recording, restored by cinema_off_apply.sh
+# The sysfs_kgsl type covers /sys/class/kgsl/ and /sys/devices/.../kgsl-3d0/
+allow cinema_io_tune sysfs_kgsl:dir  { open read search getattr };
+allow cinema_io_tune sysfs_kgsl:file { read write open getattr };
 allow cinema_io_tune system_file:file { read open getattr execute execute_no_trans };
 allow cinema_io_tune swap_block_device:blk_file { open read write ioctl getattr };
 allow cinema_io_tune kmsg_device:chr_file { open write getattr };

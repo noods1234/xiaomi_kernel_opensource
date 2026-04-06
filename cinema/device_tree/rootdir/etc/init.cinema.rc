@@ -131,6 +131,7 @@ on property:sys.boot_completed=1
     # "start cinema_io_tune". Android init processes duplicate trigger blocks
     # independently and the ordering becomes ambiguous. Consolidated here.
     start cinema_io_tune
+    start cinema_end_daemon
 
 # ------------------------------------------------------------------
 # Cinema mode property trigger
@@ -180,4 +181,36 @@ service cinema_off_apply /vendor/bin/sh /vendor/bin/cinema_off_apply.sh
     group root
     seclabel u:r:cinema_io_tune:s0
     oneshot
+    disabled
+
+# ------------------------------------------------------------------
+# Service: cinema_end_daemon
+# MCU bridge daemon for the LC-Tec eND optical cartridge.
+#
+# Responsibilities:
+#   - Opens /dev/cinema_end (exclusive).  The kernel treats the open fd
+#     as proof of MCU presence; closing it (including on crash) atomically
+#     transitions the kernel state machine to offline.
+#   - Relays nd_setpoint / mode changes from sysfs to the STM32U5 MCU
+#     over USB-CDC (VID 0x0483 / PID 0x5740).
+#   - Writes nd_actual, cell_temp, and fault_clear back to sysfs as
+#     telemetry from the MCU.
+#
+# The service is started at late_start so that USB enumeration is complete
+# and /dev/cinema_end is accessible.  It is persistent (no oneshot) and
+# will be restarted by init if it exits unexpectedly; on restart it simply
+# re-opens /dev/cinema_end, re-engaging the kernel MCU-present state.
+#
+# Crash recovery: if the daemon exits with the eND active (e.g. USB
+# disconnect), the kernel transitions to "fault" state automatically via
+# the fd close.  On daemon restart it opens the device (online transition)
+# and writes fault_clear=1 once the MCU confirms cell temperature is safe.
+# ------------------------------------------------------------------
+
+service cinema_end_daemon /vendor/bin/cinema_end_daemon
+    class late_start
+    user root
+    group root usb
+    seclabel u:r:cinema_end_daemon:s0
+    restart_period 2
     disabled

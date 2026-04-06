@@ -554,6 +554,6 @@ static struct kunit_suite cinema_end_test_suite = {
 
 kunit_test_suites(&cinema_end_test_suite);
 
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("KUnit tests for cinema_end.c validation and state logic");
 MODULE_AUTHOR("Xiaomi Cinema Kernel Project");
