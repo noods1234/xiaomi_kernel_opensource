@@ -1,0 +1,25 @@
+// Copyright (c) 2024, Xiaomi Cinema Kernel Project
+// SPDX-License-Identifier: Apache-2.0
+
+cc_binary {
+    name: "cinema_end_daemon",
+
+    vendor: true,
+
+    srcs: ["cinema_end_daemon.c"],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-DANDROID",
+        "-std=c99",
+    ],
+
+    shared_libs: [
+        "liblog",
+        "libbase",
+    ],
+
+    // libudev is not available on AOSP vendor; MCU tty discovery
+    // is performed via direct sysfs scanning instead.
+}
