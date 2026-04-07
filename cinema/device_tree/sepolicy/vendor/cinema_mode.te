@@ -107,7 +107,7 @@ neverallow { domain
 } cinema_end_sysfs_app_rw:file write;
 
 # Only the daemon may open the miscdev.
-neverallow { domain -cinema_end_daemon } cinema_end_device:chr_file write;
+neverallow { domain -cinema_end_daemon } cinema_end_device:chr_file { open write };
 
 # ---- cinema_io_tune service ----
 # (No changes from previous policy)

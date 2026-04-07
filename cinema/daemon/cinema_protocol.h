@@ -141,12 +141,15 @@ static inline int cinema_build_frame(uint8_t *buf,
                                      const void *payload,
                                      uint8_t payload_len)
 {
+    if (payload_len > FRAME_MAX_PAYLOAD)
+        return -1;
+
     buf[FRAME_OFF_MAGIC]   = CINEMA_PROTO_MAGIC;
     buf[FRAME_OFF_CMD]     = cmd;
     buf[FRAME_OFF_LEN]     = payload_len;
 
     if (payload_len && payload)
-        __builtin_memcpy(&buf[FRAME_OFF_PAYLOAD], payload, payload_len);
+        memcpy(&buf[FRAME_OFF_PAYLOAD], payload, payload_len);
 
     /* CRC covers cmd + len + payload */
     buf[FRAME_OFF_PAYLOAD + payload_len] =
