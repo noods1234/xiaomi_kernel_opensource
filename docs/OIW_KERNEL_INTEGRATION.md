@@ -11,11 +11,17 @@ exists** — Xiaomi has not published a full kernel source release for the Xiaom
 channel, consistent with common practice of withholding full source for some recent flagship SoC
 generations while still meeting GPL obligations for the GKI-common portions elsewhere.
 
-The companion project, `noods1234/xiaomi_13pro_sukisu-ultra_aosp`, builds a rooted (SukiSU Ultra) GKI
-kernel for `nuwa` from a **different, community-maintained source**:
-`crdroidandroid/android_kernel_xiaomi_sm8550` (branch `15.0`) — see that repo's
-`Kernel/configs/nuwa-13.config.json`. That is the actual buildable kernel source for this device today,
-not this repo.
+The actual buildable Xiaomi-derived kernel sources for this device live in community-maintained mirrors
+(curated from Xiaomi's OSS drops and Qualcomm CLO tags), not in this repo. Two verified lines exist
+(2026-07-06):
+
+1. **`crdroidandroid/android_kernel_xiaomi_sm8550` @ `15.0`** — what the companion repo's SukiSU Ultra
+   CI builds today (`Kernel/configs/nuwa-13.config.json` / `nuwa-oiw.config.json`).
+2. **The LineageOS kernel trio @ `lineage-23.2`** — `LineageOS/android_kernel_xiaomi_sm8550`,
+   `…-devicetrees`, and `…-modules` (the last containing the Qualcomm techpack sources, including the
+   camera-kernel driver, built from source). These are what the companion repo's full-ROM path
+   (`manifests/oiw_nuwa.xml`, Path A) consumes, alongside official LineageOS `nuwa` device trees and
+   TheMuppets vendor blob captures.
 
 ## What's staged here (`oiw/nuwa/`)
 
