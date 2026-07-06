@@ -1,3 +1,7 @@
+> **One Inch Wonder (OIW-ROM) note:** there is no `nuwa` (Xiaomi 13 Pro) branch in the table below —
+> see [`docs/OIW_KERNEL_INTEGRATION.md`](docs/OIW_KERNEL_INTEGRATION.md) and [`oiw/nuwa/`](oiw/nuwa/)
+> for why, and for the staged kernel-config-fragment work waiting on that.
+
 | Branch | Device | Android version | Base tag | Link |
 | :-: | :-: | :-: | :-: | :-: |
 | air-t-oss | Redmi 13R 5G, Redmi 13C 5G | Android T | alps-mp-t0.mp1.tc8sp2-V1.32 | [air-t-oss](https://github.com/MiCode/MTK_kernel_modules/tree/air-t-oss) |
