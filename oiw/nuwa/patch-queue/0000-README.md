@@ -2,7 +2,7 @@
 
 Currently empty — this repo does not vendor the kernel source (it's fetched by the external CI per
 `Kernel/configs/nuwa-13.config.json`), so there is nowhere to apply a source-level patch against in-tree today. See
-`kernel/oiw/nuwa/README.md` for why config fragments (`configs/oiw_camera_media.config`) are used instead.
+`kernel/oiw/nuwa/README.md` for why config fragments (`configs/oiw_cinema.config`) are used instead.
 
 If this project ever vendors the kernel source directly (e.g., as a git submodule or subtree), patches should be
 laid out as:
