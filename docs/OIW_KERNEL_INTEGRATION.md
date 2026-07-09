@@ -1,5 +1,13 @@
 # OIW-ROM Kernel Integration Notes (this repo)
 
+> **Update (2026-07-06, aurora retarget):** this mirror DOES contain official Xiaomi kernel source for
+> the project's new primary target — **`aurora-u-oss`** (Xiaomi 14 Ultra, Linux 6.1 GKI; also
+> `shennong-u-oss`, 14 Pro). The OIW cinema fragment was verified against it (`make gki_defconfig`:
+> NTFS3/UDF/localversion survive; `TYPEC_DP_ALTMODE=y` already on). Known OSS-drop gap:
+> `drivers/misc/hwid/` is referenced by Kconfig but missing — stub required to configure/compile. The
+> companion repo's `Kernel/configs/aurora-oiw.config.json.stop` builds from this branch. The notes
+> below about the **nuwa** branch gap remain accurate for that legacy device.
+
 This document explains why this multi-device Xiaomi kernel source mirror does **not** currently have
 `nuwa` (Xiaomi 13 Pro) content, and what's staged under `oiw/nuwa/` for when/if that changes.
 
